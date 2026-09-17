@@ -1,0 +1,86 @@
+classDiagram
+    class src {
+        <<package>>
+        app.ts
+        server.ts
+    }
+    class api {
+        <<package>>
+        reservations.routes.ts
+        pipeline.routes.ts
+        schemas.ts
+        errorHandler.ts
+    }
+    class config {
+        <<package>>
+        env.ts
+        pipelineConfig.ts
+    }
+    class domain {
+        <<package>>
+        types.ts
+        reservationContext.ts
+        age.ts
+    }
+    class pipeline {
+        <<package>>
+        pipeline.ts (runner)
+        filter.ts (interfaz)
+        registry.ts
+        context-guard.ts
+    }
+    class filters {
+        <<package>>
+        validatePassenger.filter.ts
+        validateFlight.filter.ts
+        exchangeRateEnrichment.filter.ts
+        basePrice.filter.ts
+        loyaltyDiscount.filter.ts
+        passengerTypeAdjustment.filter.ts
+        taxesAndFees.filter.ts
+        currencyConversion.filter.ts
+    }
+    class services {
+        <<package>>
+        reservationProcessingService.ts
+        reservationResult.ts
+    }
+    class exchangeRateServices {
+        <<package>>
+        exchangeRateProvider.ts
+        exchangeRateApiClient.ts
+        ratesCache.ts
+        countryCurrency.ts
+    }
+    class repositories {
+        <<package>>
+        passengerRepository.ts
+        flightRepository.ts
+    }
+    class store {
+        <<package>>
+        processingStore.ts
+    }
+    class data {
+        <<package>>
+        mockPassengers.ts
+        mockFlights.ts
+    }
+    class support {
+        <<package>>
+        logger.ts
+        clock.ts
+        money.ts
+    }
+
+    src *-- api : es parte de
+    src *-- config : es parte de
+    src *-- domain : es parte de
+    src *-- pipeline : es parte de
+    src *-- services : es parte de
+    src *-- repositories : es parte de
+    src *-- store : es parte de
+    src *-- data : es parte de
+    src *-- support : es parte de
+    pipeline *-- filters : es parte de
+    services *-- exchangeRateServices : es parte de

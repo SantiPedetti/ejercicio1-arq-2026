@@ -1,0 +1,20 @@
+stateDiagram-v2
+    [*] --> PENDING: Recepción del request HTTP
+    PENDING --> PROCESSING: Inicio de ejecución en el servicio
+    
+    PROCESSING --> REJECTED: Validación de entrada fallida (INVALID_RESERVATION)
+    PROCESSING --> REJECTED: Regla de negocio no superada (NO_SEATS, PASSENGER_NOT_FOUND, etc.)
+    PROCESSING --> FAILED: Excepción en filtro crítico (FILTER_EXCEPTION)
+    PROCESSING --> FAILED: Invariante rota detectada por Guard (DATA_CORRUPTED)
+    
+    PROCESSING --> CONFIRMED: Todos los filtros superados exitosamente
+    
+    CONFIRMED --> [*]: Respuesta HTTP 200 emitida y guardada en Store
+    REJECTED --> [*]: Respuesta HTTP 200 emitida y guardada en Store
+    FAILED --> [*]: Respuesta HTTP 200 emitida y guardada en Store
+
+    note right of CONFIRMED
+        La reserva puede poseer warnings acumulados
+        (e.g. STALE_RATE o EXCHANGE_RATE_UNAVAILABLE)
+        sin degradar su estado CONFIRMED.
+    end note

@@ -1,760 +1,1125 @@
-# Documentacion arquitectonica — Sistema de Reservas de Vuelos
+# Sistema de Reservas de Vuelos (Pipes & Filters)
+## Descripción de Arquitectura de Software (SADP 2.0)
 
-Documento educativo: no describe solo *que* existe, sino *por que* cada decision es razonable, que fuerzas la motivan, que alternativas habia y que trade-offs introduce.
-
-Cada afirmacion relevante lleva una etiqueta de evidencia:
-
-- **Confirmada:** respaldada por la consigna, el codigo, la configuracion o las pruebas de este repositorio.
-- **Inferida:** deducida del diseno actual, sin evidencia de la intencion historica.
-- **Propuesta:** recomendacion que todavia no forma parte del sistema.
-- **Desconocida:** no hay informacion suficiente.
-
-Fuentes consultadas: consigna del ejercicio (`Ejercicio de Aplicacion 1`), codigo fuente en `src/`, configuracion en `src/config/pipelineConfig.ts`, pruebas en `tests/` (58 casos), coleccion de Postman y ejecucion manual contra la API externa real. No existe SRS formal, historias de usuario ni metricas de produccion: los huecos quedan listados en la ultima seccion.
+- **Proyecto:** Sistema de Procesamiento de Reservas de Vuelos
+- **Materia:** FI-3851 Arquitectura de Software — Tecnología (Universidad ORT Uruguay, 2026-2)
+- **Fecha de elaboración:** 17 de setiembre de 2026
+- **Autores:** Equipo de Arquitectura y Construcción FI-3851
+- **Estado del documento:** Aprobado / Confirmado con código real de implementación
 
 ---
 
-## 2.1 Proposito del sistema
+### Índice de Contenidos
 
-### Problema y objetivo
+1. [Introducción](#1-introducción)
+   - 1.1 [Propósito](#11-propósito)
+   - 1.2 [Guía de lectura y organización](#12-guía-de-lectura-y-organización)
+2. [Antecedentes](#2-antecedentes)
+   - 2.1 [Propósito del sistema](#21-propósito-del-sistema)
+   - 2.2 [Requerimientos significativos de arquitectura](#22-requerimientos-significativos-de-arquitectura)
+     - 2.2.1 [Resumen de requerimientos funcionales (RF)](#221-resumen-de-requerimientos-funcionales)
+     - 2.2.2 [Resumen de atributos de calidad (AC) y restricciones (RS)](#222-resumen-de-requerimientos-de-atributos-de-calidad-y-restricciones)
+     - 2.2.3 [Escenarios detallados de atributos de calidad](#223-escenarios-detallados-de-atributos-de-calidad)
+3. [Documentación de la Arquitectura](#3-documentación-de-la-arquitectura)
+   - 3.1 [Diagrama de contexto (D1)](#31-diagrama-de-contexto)
+   - 3.2 [Vistas de módulos](#32-vistas-de-módulos)
+     - 3.2.1 [Vista de descomposición (D2)](#321-vista-de-descomposición)
+     - 3.2.2 [Vista de uso y vista de layers (D3)](#322-vista-de-uso-y-vista-de-layers)
+     - 3.2.4 [Catálogo de elementos de módulos](#324-catálogo-de-elementos-de-módulos)
+     - 3.2.5 [Interfaces de módulos](#325-interfaces-de-módulos)
+     - 3.2.6 [Comportamiento en vistas de módulos (D4, D5, D6 y D7)](#326-comportamiento-en-vistas-de-módulos)
+   - 3.3 [Vistas de componentes y conectores (C&C)](#33-vistas-de-componentes-y-conectores)
+     - 3.3.1 [Representación primaria (D8)](#331-representación-primaria)
+     - 3.3.2 [Catálogo de elementos C&C](#332-catálogo-de-elementos-cc)
+     - 3.3.3 [Interfaces C&C](#333-interfaces-cc)
+     - 3.3.4 [Comportamiento C&C](#334-comportamiento-cc)
+     - 3.3.5 [Relación con elementos lógicos](#335-relación-con-elementos-lógicos)
+     - 3.3.6 [Decisiones de diseño y guía de variabilidad](#336-decisiones-de-diseño-y-guía-de-variabilidad)
+   - 3.4 [Vistas de asignación](#34-vistas-de-asignación)
+     - 3.4.1 [Vista de despliegue (D9)](#341-vista-de-despliegue)
+     - 3.4.2 [Vista de instalación](#342-vista-de-instalación)
+4. [Anexos](#4-anexos)
+   - [Anexo A: Atributo → Táctica → Tecnología](#anexo-a-atributo--táctica--tecnología)
+   - [Anexo B: Matriz de trazabilidad](#anexo-b-matriz-de-trazabilidad)
+   - [Anexo C: Uso de Inteligencia Artificial](#anexo-c-uso-de-inteligencia-artificial)
+   - [Anexo D: Glosario](#anexo-d-glosario)
 
-Una reserva de vuelo no se puede confirmar con un unico calculo: hay que verificar que el pasajero exista y este habilitado, que el vuelo exista y tenga lugar, y despues construir el precio final componiendo multiplicadores de clase, descuentos comerciales, ajustes por tipo de pasajero, impuestos y tasas. Esas reglas cambian a ritmos distintos y por motivos distintos (comercial, regulatorio, operativo), y parte de la informacion necesaria —la cotizacion de la moneda del pais de destino— proviene de un tercero que puede estar caido.
+---
 
-El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando esas reglas de forma trazable y configurable**, entregando por cada reserva el precio desglosado, la conversion de moneda y el detalle de errores y avisos, sin que el fallo de una reserva o de un tercero comprometa el resto del lote. (Confirmada: consigna, secciones "Objetivo" y "Aclaraciones".)
+## 1. Introducción
 
-### Usuarios y actores
+El presente documento describe la arquitectura de software del Sistema de Procesamiento de Reservas de Vuelos, implementado en Node.js y TypeScript bajo el patrón arquitectónico Pipes & Filters. Sigue el estándar de documentación **SADP 2.0** (*Software Architecture Description Pattern*), complementado con las directivas de vistas de Merson (SEI) y las normas de la cátedra de Arquitectura de Software de la Universidad ORT Uruguay (2026-2).
 
-| Actor | Descripcion | Objetivos principales |
+### 1.1 Propósito
+
+El propósito del presente documento es proveer una especificación completa de la arquitectura del Sistema de Reservas de Vuelos, justificando técnica y empíricamente las decisiones estructurales, los patrones aplicados, las tácticas de control de atributos de calidad y sus correspondientes trade-offs, con el fin de servir como base de diseño, evaluación de calidad y defensa académica.
+
+### 1.2 Guía de lectura y organización
+
+El documento está estructurado para satisfacer los intereses de diversos lectores:
+- **Evaluadores y arquitectos:** las secciones 2.2, 3.1, 3.3 y el Anexo A exponen los *drivers* arquitectónicos, los escenarios de calidad y la correspondencia entre atributos, tácticas y tecnologías.
+- **Desarrolladores y mantenedores:** las secciones 3.2 (vistas de módulos), 3.3.6 (guía de variabilidad) y 3.4 (instalación y despliegue) detallan la estructura de paquetes, contratos de interfaz, puntos de extensión e instrucciones operativas.
+- **Trazabilidad y gobernanza:** los anexos B y C y los Registros de Decisiones de Arquitectura ([`docs/adr/`](../adr/)) justifican el porqué de cada solución frente a las alternativas descartadas.
+
+Todas las descripciones reflejan estrictamente el **código fuente implementado en `src/`**, con verificación en verde mediante compilación estricta (`tsc`) y linteo (`eslint`). Las métricas que no han sido medidas en entornos productivos se declaran explícitamente como `Pendiente de validación`.
+
+---
+
+## 2. Antecedentes
+
+### 2.1 Propósito del sistema
+
+El sistema constituye el motor de backend encargado de procesar solicitudes de reservas aéreas remitidas en lotes en formato JSON. El procesamiento demanda aplicar reglas de negocio heterogéneas: verificar la vigencia y datos del pasajero, constatar la existencia y cupo del vuelo, obtener cotizaciones de moneda extranjera en tiempo real mediante un proveedor externo, computar tarifas escalonadas según cabina, lealtad y edad, liquidar impuestos fiscales y recargos aeronáuticos, y convertir los importes a la divisa del país de destino.
+
+#### Usuarios y actores
+1. **Cliente HTTP:** aplicación cliente o interfaz de reservas que envía lotes de 1 a 100 reservas al endpoint `POST /reservations/process` y consulta estados específicos mediante `GET /reservations/:id/status`.
+2. **Operador / Administrador:** rol técnico u operativo que consulta y modifica parámetros y activación de filtros en caliente mediante `GET/PUT /pipeline/config` e invalida la memoria intermedia de cotizaciones a través de `POST /pipeline/cache/invalidate`.
+3. **Proveedor de Tipo de Cambio (ExchangeRate-API):** servicio externo REST que suministra cotizaciones actualizadas para conversión de divisas.
+
+#### Alcance del sistema
+- **Dentro del alcance:** recepción sincrónica de lotes vía REST; validación sintáctica y semántica con esquemas Zod; canalización por 8 filtros secuenciales independientes; inyección de dependencias; tolerancia a fallos ante caídas del proveedor de divisas; cálculo determinista de precios; almacenamiento volátil acotado (1000 estados); logging estructurado con Pino y correlación por request.
+- **Fuera del alcance:** persistencia relacional o en base de datos externa; decremento transaccional de inventario de asientos en aerolíneas; pasarela de pagos; autenticación y autorización; escalado horizontal multi-instancia.
+
+#### Documentos relacionados
+- Consigna de la cátedra: `docs/plan/CONSIGNA.md`
+- Plan de construcción aprobado: `docs/plan/PLAN.md`
+- Reglas de diseño y documentación de la cátedra: `docs/plan/REGLAS-CATEDRA.md`
+- Decisiones arquitectónicas: `docs/adr/` (ADR-001 al ADR-008)
+
+---
+
+### 2.2 Requerimientos significativos de arquitectura
+
+#### 2.2.1 Resumen de requerimientos funcionales
+
+| ID | Descripción | Actor |
 |---|---|---|
-| Sistema cliente de reservas | Aplicacion o front-end que envia lotes de solicitudes | Obtener precios finales y el motivo de cada rechazo |
-| Operador / analista comercial | Persona que ajusta reglas de negocio del pipeline | Cambiar descuentos, impuestos o habilitar filtros sin redeploy |
-| Proveedor de tipo de cambio | Servicio externo ExchangeRate-API | (Actor externo) Proveer cotizaciones actualizadas |
-| Equipo de desarrollo | Autores y mantenedores de los filtros | Agregar o modificar filtros con bajo riesgo de regresion |
+| **RF 1** | **Procesar lote de reservas:** Recibe un sobre de 1 a 100 reservas, ejecuta la tubería de filtros para cada una de forma concurrente y retorna el resumen de lote, desglose de tarifas, errores, warnings y el tiempo total transcurrido. | Cliente HTTP |
+| **RF 2** | **Validar pasajero:** Verifica existencia en catálogo mock, estado activo, formato de email y coherencia entre edad cumplida a la fecha del vuelo y tipo de pasajero declarado. | Sistema (Filtro 1) |
+| **RF 3** | **Validar vuelo:** Constata existencia de código de vuelo, disponibilidad de asientos (`availableSeats > 0`), coincidencia de ruta y fecha de partida futura. | Sistema (Filtro 2) |
+| **RF 4** | **Enriquecer con tipo de cambio:** Detecta la moneda local del país de destino y obtiene la tasa de cambio vigente consultando la API externa o la caché en memoria. | Sistema (Filtro 3) |
+| **RF 5** | **Calcular precio:** Aplica tarifa por clase de cabina, deducciones encadenadas de lealtad y edad, impuestos fiscales, tasa aeroportuaria fija y sobrecargo de combustible. | Sistema (Filtros 4 a 7) |
+| **RF 6** | **Consultar estado:** Permite recuperar el estado y resultado del procesamiento reciente de una reserva individual mediante su identificador único. | Cliente HTTP |
+| **RF 7** | **Ver configuración:** Consulta la configuración vigente del pipeline, parámetros tarifarios y el orden inmutable de los filtros habilitados. | Operador |
+| **RF 8** | **Modificar configuración:** Habilita o deshabilita filtros y ajusta multiplicadores o tasas en caliente con efecto inmediato a partir del lote siguiente. | Operador |
+| **RF 9** | **Invalidar caché:** Permite purgar manualmente la caché de cotizaciones en memoria forzando una nueva consulta externa en las solicitudes subsiguientes. | Operador |
 
-(Confirmada para el cliente y el proveedor: endpoints y cliente HTTP existentes. Inferida para operador y equipo de desarrollo: la consigna exige configurabilidad y filtros testeables por separado, pero no nombra roles.)
+#### 2.2.2 Resumen de requerimientos de atributos de calidad y restricciones
 
-### Funciones principales
-
-- Procesar un array de reservas a traves de una cadena ordenada de filtros.
-- Validar pasajero (existencia, estado, contacto, coherencia edad/tipo).
-- Validar vuelo (existencia, disponibilidad, ruta, fecha futura).
-- Enriquecer la reserva con la cotizacion de la moneda del pais de destino.
-- Calcular precio base por clase, descuentos por lealtad y tipo de pasajero, impuestos y tasas.
-- Convertir el total a la moneda de destino.
-- Reportar por reserva: estado, desglose de precio, errores, warnings y traza de filtros; y por lote, el tiempo total de procesamiento.
-- Consultar el estado del ultimo procesamiento de una reserva.
-- Consultar y modificar la configuracion del pipeline en ejecucion.
-
-(Confirmada: `src/pipeline/filters/`, `src/api/`, consigna "Filtros a Implementar" y "Endpoints Requeridos".)
-
-### Alcance
-
-**Incluido:**
-
-- Pipeline de filtros en proceso, sincronico por reserva.
-- Datos de pasajeros y vuelos mock en memoria.
-- Integracion HTTP con un proveedor publico de tasas de cambio.
-- API REST con cuatro endpoints requeridos mas `/health` y reset de configuracion.
-- Pruebas unitarias por filtro y de integracion por endpoint.
-
-**Fuera del alcance:**
-
-- Persistencia real (base de datos), transacciones y reserva efectiva de asientos (el sistema no decrementa `availableSeats`).
-- Autenticacion, autorizacion y multi-tenancy.
-- Cobro, emision de tickets y notificaciones.
-- Despliegue, escalado horizontal y observabilidad centralizada.
-- Procesamiento asincronico o distribuido de los filtros.
-
-(Confirmada: no hay codigo de persistencia, seguridad ni despliegue en el repositorio; la consigna acota el ejercicio a mock data y pipeline en proceso.)
-
-### Documentos relacionados
-
-- Consigna del ejercicio: `Ejercicio de Aplicacion 1.md` (documento del curso, fuera del repositorio).
-- [README](../../README.md) — instalacion, endpoints y reglas de negocio.
-- ADRs: [`docs/adr`](../adr).
-- Escenarios de calidad: [`docs/architecture/quality-scenarios`](quality-scenarios).
+| ID Requerimiento | ID Atributo / Restricción | Descripción |
+|---|---|---|
+| RF 4 | **AC 1 Disponibilidad** | Si la API de tipo de cambio no responde o falla, el lote debe completarse exitosamente con advertencias legibles y precios en USD (degradación controlada). |
+| RF 1, RF 8 | **AC 2 Modificabilidad** | Se debe poder añadir o retirar un filtro sin modificar el orquestador (`Pipeline`) ni los demás filtros. |
+| RF 8 | **AC 3 Modificabilidad (en ejecución)** | Las modificaciones de configuración vía API deben regir inmediatamente para nuevos lotes sin reiniciar el servidor y sin alterar lotes en curso. |
+| RF 1 | **AC 4 Disponibilidad (aislamiento de fallos)** | Una excepción técnica o dato anómalo en una reserva debe aislarse en esa reserva (estado `FAILED`), procesando las demás normalmente. |
+| RF 4 | **AC 5 Rendimiento** | La consulta de tasas debe optimizarse mediante caché en memoria y técnica de solicitud única (*single-flight*) para evitar peticiones redundantes. |
+| Todos | **AC 6 Testeabilidad** | Todos los filtros, repositorios y servicios deben ser testeables unitariamente de forma determinista y sin acceso a la red. |
+| RF 1 | **AC 7 Confiabilidad de entrada** | Las reservas individuales malformadas dentro de un sobre válido se rechazan puntualmente sin abortar el resto del lote. |
+| — | **RS 1 Tecnología** | Implementación obligatoria en Node.js (>= 22), TypeScript (modo estricto) y Express.js. |
+| — | **RS 2 Estilo arquitectónico** | Uso preceptivo del patrón Pipes & Filters en proceso con filtros en orden predeterminado. |
+| — | **RS 3 Datos en memoria** | Datos de prueba precargados en memoria (`mockPassengers.ts`, `mockFlights.ts`), sin base de datos relacional externa. |
+| — | **RS 4 Integración externa** | Integración con servicio público ExchangeRate-API v4 gratuito sin requerimiento de API keys; importes base fijados en USD. |
+| — | **RS 5 Entregables** | Entrega de código fuente, suite de pruebas automatizadas, colección Postman con respuestas guardadas y documentación técnica. |
+| — | **RS 6 Organizacional** | Cumplimiento de pautas de entrega, registro transparente del uso de IA y preparación para defensa oral presencial individual. |
 
 ---
 
-## 2.2 Requerimientos significativos de arquitectura
+### 2.2.3 Escenarios detallados de atributos de calidad
 
-Se incluyen solo los requerimientos que condicionan la estructura, afectan a varios componentes, obligan a adoptar una tactica o tecnologia, o tienen alto costo de cambio. Requerimientos puramente locales (por ejemplo, el formato exacto de un mensaje de error) quedan fuera.
+A continuación se especifican los 7 escenarios de arquitectura bajo el formato canónico de 6 partes de Bass et al.:
 
-### 2.2.1 Resumen de requerimientos funcionales
+```markdown
+### AC 1 — Disponibilidad: Tolerancia y degradación ante caída de la API de tipo de cambio
+| Parte | Valor |
+|---|---|
+| Fuente | Servicio externo ExchangeRate-API |
+| Estímulo | La API no responde (timeout 5000 ms), arroja errores HTTP 5xx o falla la red en todos sus reintentos |
+| Artefacto | Proveedor de tasas (`ExchangeRateApiClient`), caché (`RatesCache`) y filtro 3 (`exchangeRateEnrichment`) |
+| Entorno | Operación normal en tiempo de ejecución, caché inicialmente vacía |
+| Respuesta | El sistema agota un máximo de 3 intentos con backoff; si existe tasa previa vencida en memoria la utiliza con warning `STALE_RATE`; si no hay tasa disponible, continúa la reserva en USD emitiendo warning `EXCHANGE_RATE_UNAVAILABLE` |
+| Medida de respuesta | 100% de las reservas del lote finalizan con estado procesado (`CONFIRMED`); respuesta HTTP 200; 0 errores 500 al cliente; máximo de 3 intentos y <= 16 s de espera acumulada por lote (no por reserva individual gracias a single-flight). Tiempo de respuesta global en degradación: Pendiente de validación en infraestructura de producción |
 
-| ID | Requerimiento | Descripcion | Actor | Significancia arquitectonica |
+**Tácticas que lo satisfacen:** Detección de fallas (timeout con `AbortSignal`), Reintento con retroceso exponencial y jitter, Degradación grácil (*stale-cache* o divisa base USD), Solicitud única compartida (*single-flight*).  
+**ADRs relacionados:** [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md), [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md).  
+**Test que lo verifica:** `tests/integration/qualityScenarios.test.ts` (suite AC 1) y `tests/integration/consignaCases.test.ts`.
+```
+
+```markdown
+### AC 2 — Modificabilidad: Adición de un filtro nuevo sin modificar el runner
+| Parte | Valor |
+|---|---|
+| Fuente | Desarrollador de software / Diseñador |
+| Estímulo | Se solicita incorporar una nueva etapa al pipeline (e.g. auditoría o nuevo cálculo tarifario) |
+| Artefacto | Pipeline runner (`src/pipeline/pipeline.ts`), catálogo y filtros |
+| Entorno | Tiempo de diseño y construcción |
+| Respuesta | El desarrollador crea la clase o fábrica que implementa la interfaz `Filter` y la registra en el mapa de configuración |
+| Medida de respuesta | 0 líneas modificadas en `src/pipeline/pipeline.ts`; 0 líneas modificadas en los filtros preexistentes; <= 4 archivos tocados para registro y configuración (`registry.ts`, `pipelineConfig.ts`, tipos y el nuevo archivo de filtro); esfuerzo de codificación <= 0.5 días-persona |
+
+**Tácticas que lo satisfacen:** Encapsulamiento, Interfaz abstracta uniforme (`Filter`), Bajo acoplamiento mediante inversión de dependencias.  
+**ADRs relacionados:** [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-006](../adr/ADR-006-configuracion-inmutable-snapshot.md).  
+**Test que lo verifica:** `tests/integration/qualityScenarios.test.ts` (suite AC 2).
+```
+
+```markdown
+### AC 3 — Modificabilidad en ejecución: Actualización de configuración en caliente
+| Parte | Valor |
+|---|---|
+| Fuente | Operador del sistema / Administrador |
+| Estímulo | Petición `PUT /pipeline/config` modificando el estado de activación de filtros o parámetros de precios |
+| Artefacto | Almacén de configuración (`PipelineConfigStore`), orquestador y servicio de reservas |
+| Entorno | Sistema en ejecución con lotes de reservas procesándose activamente |
+| Respuesta | La nueva configuración se valida con Zod y reemplaza atómicamente el estado global; los lotes en curso finalizan con el snapshot con el que iniciaron, y los lotes siguientes adoptan la nueva configuración de inmediato |
+| Medida de respuesta | 0 reinicios del servidor; 0 lotes con políticas tarifarias inconsistentes o mezcladas; efectividad a partir del request inmediatamente posterior |
+
+**Tácticas que lo satisfacen:** Vinculación diferida (*runtime configuration*), Snapshot inmutable por lote, Reemplazo atómico de estado.  
+**ADRs relacionados:** [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md), [ADR-006](../adr/ADR-006-configuracion-inmutable-snapshot.md).  
+**Test que lo verifica:** `tests/integration/qualityScenarios.test.ts` (suite AC 3).
+```
+
+```markdown
+### AC 4 — Disponibilidad: Aislamiento de fallos y excepciones no controladas
+| Parte | Valor |
+|---|---|
+| Fuente | Excepción imprevista de software o dato anómalo dentro de un filtro |
+| Estímulo | Un filtro arroja un error no capturado o produce valores incompatibles durante el cómputo de una reserva |
+| Artefacto | Orquestador `Pipeline` y monitor de invariantes `context-guard` |
+| Entorno | Procesamiento concurrente de un lote de N reservas |
+| Respuesta | El orquestador captura la excepción; si el filtro es crítico o falla el guard, marca la reserva afectada como `FAILED` con código `FILTER_EXCEPTION` o `DATA_CORRUPTED`, aborta los pasos siguientes de esa reserva registrándolos como `NOT_RUN`, y procesa las N-1 reservas restantes sin interrumpir el proceso Node.js |
+| Medida de respuesta | El 100% de las N-1 reservas válidas se procesa normalmente; respuesta HTTP 200 global con estado discriminado en el array `results`; 0 caídas del proceso servidor |
+
+**Tácticas que lo satisfacen:** Aislamiento de fallos (*fault containment*), Supervisión de invariantes de contexto, Clasificación de criticidad de componentes.  
+**ADRs relacionados:** [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md), [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md).  
+**Test que lo verifica:** `tests/integration/qualityScenarios.test.ts` (suite AC 4) y `tests/pipeline/context-guard.test.ts`.
+```
+
+```markdown
+### AC 5 — Rendimiento: Optimización de consultas a la API mediante caché y single-flight
+| Parte | Valor |
+|---|---|
+| Fuente | Cliente HTTP |
+| Estímulo | Recepción de un lote de 100 reservas con destinos en divisas extranjeras (e.g. BRL, EUR, ARS) |
+| Artefacto | Componente de caché (`RatesCache`) y cliente HTTP (`ExchangeRateApiClient`) |
+| Entorno | Sistema en operación normal, escenario de caché fría y posteriormente caché caliente |
+| Respuesta | Con caché fría, las peticiones concurrentes del lote se consolidan en una única promesa de red saliente (*single-flight*); con caché caliente, todas las conversiones se resuelven instantáneamente en memoria |
+| Medida de respuesta | Exactamente 1 llamada HTTP a la API externa por moneda base con la caché fría; 0 llamadas a la API durante la ventana de TTL de 1 hora con caché caliente; tiempo de resolución del lote en memoria local: Pendiente de validación en entorno de pruebas de carga formal |
+
+**Tácticas que lo satisfacen:** Mantenimiento de copias de datos (Caché en memoria con TTL), Solicitud consolidada (*single-flight* promise sharing).  
+**ADRs relacionados:** [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md).  
+**Test que lo verifica:** `tests/integration/qualityScenarios.test.ts` (suite AC 5) y `tests/services/ratesCache.test.ts`.
+```
+
+```markdown
+### AC 6 — Testeabilidad: Verificación unitaria e integral determinista sin dependencias de red
+| Parte | Valor |
+|---|---|
+| Fuente | Desarrollador o servidor de integración continua |
+| Estímulo | Ejecución del comando de validación técnica (`typecheck`, `lint` y suite de pruebas automatizadas) |
+| Artefacto | Toda la base de código (`src/` y `tests/`) |
+| Entorno | Estación de trabajo local o runner CI/CD completamente aislado de internet |
+| Respuesta | Todos los componentes se instancian con stubs, mocks y relojes inyectados (`Clock`, `ExchangeRateProvider`, repositorios en memoria), verificando la totalidad de reglas y contratos sin emitir tráfico de red |
+| Medida de respuesta | 100% de las pruebas automatizadas ejecutadas en verde sin acceso a internet; cobertura >= 80% en líneas y ramas; 0 llamadas reales a endpoints externos en tests |
+
+**Tácticas que lo satisfacen:** Inyección de dependencias en constructores y fábricas, Abstracción mediante interfaces (DIP), Eliminación de fuentes no deterministas (`Clock` abstracto en lugar de `new Date()`).  
+**ADRs relacionados:** [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md).  
+**Test que lo verifica:** Suite de pruebas en `tests/` y verificación de tipos con `tsc`.
+```
+
+```markdown
+### AC 7 — Confiabilidad de entrada: Rechazo granular de datos malformados
+| Parte | Valor |
+|---|---|
+| Fuente | Cliente HTTP |
+| Estímulo | Solicitud `POST /reservations/process` conteniendo un lote donde una o más reservas presentan datos corruptos o tipos inválidos, junto con reservas conformes |
+| Artefacto | Esquema de validación Zod (`singleReservationSchema`) y servicio de procesamiento (`ReservationProcessingService`) |
+| Entorno | Operación normal |
+| Respuesta | Cada reserva se valida independientemente antes de entrar a la tubería; las reservas defectuosas se identifican de inmediato como `REJECTED` con código `INVALID_RESERVATION` y detalle de campos en `errors`, retornando HTTP 200 global con el procesamiento completo de las reservas válidas |
+| Medida de respuesta | 0 excepciones no controladas; 0 rechazos de reservas válidas adyacentes; HTTP 400 únicamente ante violación estructural del sobre global (`reservations` no array o vacío); HTTP 200 en lotes mixtos con detalle individual por ítem |
+
+**Tácticas que lo satisfacen:** Validación rigurosa en fronteras de entrada (*Input Validation* con Zod), Aislamiento de ítems en procesamiento de lotes.  
+**ADRs relacionados:** [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md).  
+**Test que lo verifica:** `tests/integration/qualityScenarios.test.ts` (suite AC 7) y `tests/api/schemas.test.ts`.
+```
+
+---
+
+## 3. Documentación de la Arquitectura
+
+El sistema adopta como patrón estructurador principal **Pipes & Filters**, integrado armónicamente con:
+- **Layers (Capas estrictas):** desacoplamiento vertical unidireccional sin saltos de capa.
+- **Repository:** abstracción de las colecciones de datos en memoria para pasajeros y vuelos.
+- **Adapter / Anticorruption Layer (ACL):** aislamiento de la API de tipo de cambio detrás de la interfaz `ExchangeRateProvider`.
+- **Decorator:** enriquecimiento transparente del proveedor con responsabilidades de almacenamiento en caché y *single-flight*.
+
+---
+
+### 3.1 Diagrama de contexto
+
+El diagrama de contexto presenta al sistema como una caja negra delimitada, ilustrando todas sus interacciones con actores externos y el protocolo y sincronismo de sus conectores.
+
+```mermaid
+flowchart LR
+    subgraph Clients["Actores del Sistema"]
+        Client["Cliente HTTP (Reservas)\n[Actor Externo]"]
+        Operator["Operador / Analista\n[Actor Administrativo]"]
+    end
+
+    subgraph SystemBoundary["Límite del Sistema: Flight Reservation Backend"]
+        System["Sistema de Procesamiento\nde Reservas de Vuelos\n[Express + TypeScript + Node.js 22]"]
+    end
+
+    subgraph ExternalServices["Servicios y Destinos Externos"]
+        ExchangeAPI["ExchangeRate-API\n[Servicio REST Externo]"]
+        StdOut["Consola del Sistema (stdout)\n[Destino de Logs Pino JSON]"]
+    end
+
+    Client -->|"Conector HTTP REST\n[Local/Red, Síncrono, JSON]\nPOST /reservations/process\nGET /reservations/:id/status"| System
+    Operator -->|"Conector HTTP REST\n[Local/Red, Síncrono, JSON]\nGET /pipeline/config\nPUT /pipeline/config\nPOST /pipeline/cache/invalidate"| System
+    System -->|"Conector HTTPS REST Remoto\n[Remoto, Síncrono con Timeout 5s, JSON]\nGET /v4/latest/{base}"| ExchangeAPI
+    System -->|"Conector IPC / Stream Local\n[Local, Asíncrono no bloqueante]\nStdout Pino Structured Logs"| StdOut
+
+    %% Leyenda
+    classDef boundary fill:#f8f9fa,stroke:#343a40,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef actor fill:#e7f5ff,stroke:#1971c2,stroke-width:2px;
+    classDef system fill:#e6fcf5,stroke:#0ca678,stroke-width:2px;
+    classDef external fill:#fff3bf,stroke:#f08c00,stroke-width:2px;
+
+    class SystemBoundary boundary;
+    class Client,Operator actor;
+    class System system;
+    class ExchangeAPI,StdOut external;
+```
+
+**Leyenda de notación del Diagrama de Contexto:**
+- **Rectángulos azules:** Actores humanos o aplicaciones cliente consumidoras.
+- **Rectángulo verde:** Límite del sistema evaluado (caja negra ejecutada en Node.js).
+- **Rectángulos amarillos:** Servicios o destinos externos al límite del software.
+- **Flechas simples:** Dirección de la invocación (quien inicia la solicitud apunta a quien la atiende; la respuesta viaja por el mismo canal). No se emplean flechas dobles.
+- **Conectores locales vs remotos:** Se distingue explícitamente entre llamadas remotas por red HTTPS (hacia ExchangeRate-API) y llamadas locales/IPC (hacia la consola estándar de logs).
+
+---
+
+### 3.2 Vistas de módulos
+
+#### 3.2.1 Vista de descomposición
+
+La vista de descomposición exhibe la partición jerárquica del código fuente dentro de `src/` bajo la relación «es parte de».
+
+```mermaid
+classDiagram
+    class src {
+        <<package>>
+        app.ts
+        server.ts
+    }
+    class api {
+        <<package>>
+        reservations.routes.ts
+        pipeline.routes.ts
+        schemas.ts
+        errorHandler.ts
+    }
+    class config {
+        <<package>>
+        env.ts
+        pipelineConfig.ts
+    }
+    class domain {
+        <<package>>
+        types.ts
+        reservationContext.ts
+        age.ts
+    }
+    class pipeline {
+        <<package>>
+        pipeline.ts (runner)
+        filter.ts (interfaz)
+        registry.ts
+        context-guard.ts
+    }
+    class filters {
+        <<package>>
+        validatePassenger.filter.ts
+        validateFlight.filter.ts
+        exchangeRateEnrichment.filter.ts
+        basePrice.filter.ts
+        loyaltyDiscount.filter.ts
+        passengerTypeAdjustment.filter.ts
+        taxesAndFees.filter.ts
+        currencyConversion.filter.ts
+    }
+    class services {
+        <<package>>
+        reservationProcessingService.ts
+        reservationResult.ts
+    }
+    class exchangeRateServices {
+        <<package>>
+        exchangeRateProvider.ts
+        exchangeRateApiClient.ts
+        ratesCache.ts
+        countryCurrency.ts
+    }
+    class repositories {
+        <<package>>
+        passengerRepository.ts
+        flightRepository.ts
+    }
+    class store {
+        <<package>>
+        processingStore.ts
+    }
+    class data {
+        <<package>>
+        mockPassengers.ts
+        mockFlights.ts
+    }
+    class support {
+        <<package>>
+        logger.ts
+        clock.ts
+        money.ts
+    }
+
+    src *-- api : es parte de
+    src *-- config : es parte de
+    src *-- domain : es parte de
+    src *-- pipeline : es parte de
+    src *-- services : es parte de
+    src *-- repositories : es parte de
+    src *-- store : es parte de
+    src *-- data : es parte de
+    src *-- support : es parte de
+    pipeline *-- filters : es parte de
+    services *-- exchangeRateServices : es parte de
+```
+
+**Decisiones de diseño en descomposición:**
+- Separación de responsabilidades: los filtros de procesamiento residen en submódulos aislados en `src/pipeline/filters/` y no dependen de controladores ni rutas HTTP ([ADR-001](../adr/ADR-001-pipes-and-filters.md)).
+- Encapsulamiento del cliente externo en `src/services/exchangeRate/`, aislando detalles de red y protocolos HTTP ([ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md)).
+
+---
+
+#### 3.2.2 Vista de uso y vista de layers
+
+El siguiente diagrama representa de forma unificada las capas arquitectónicas del software y las relaciones de dependencia permitidas («usa»). Las llamadas son estrictamente descendentes, sin saltos de capa ni dependencias circulares.
+
+```mermaid
+flowchart TD
+    subgraph PresentationLayer["Capa de Transporte y Presentación (api)"]
+        Routes["Rutas y Controladores\n[reservations.routes, pipeline.routes]"]
+        Schemas["Validación de Entrada\n[schemas.ts (Zod)]"]
+        ErrorHandler["Manejador de Errores\n[errorHandler.ts]"]
+    end
+
+    subgraph ApplicationLayer["Capa de Coordinación y Aplicación (services)"]
+        Service["Servicio de Procesamiento\n[reservationProcessingService.ts]"]
+        Mapper["Proyector de Resultados (Sink)\n[reservationResult.ts]"]
+    end
+
+    subgraph ProcessingLayer["Capa de Procesamiento (pipeline & filters)"]
+        Runner["Orquestador Pipeline\n[pipeline.ts]"]
+        Guard["Monitor Invariantes\n[context-guard.ts]"]
+        FilterInterface["Contrato de Filtro\n[filter.ts]"]
+        Registry["Registro y Fábricas\n[registry.ts]"]
+        F1["F1: validatePassenger"]
+        F2["F2: validateFlight"]
+        F3["F3: exchangeRateEnrichment"]
+        F4["F4: basePrice"]
+        F5["F5: loyaltyDiscount"]
+        F6["F6: passengerTypeAdjustment"]
+        F7["F7: taxesAndFees"]
+        F8["F8: currencyConversion"]
+    end
+
+    subgraph IntegrationLayer["Capa de Acceso a Datos e Integración"]
+        Repos["Repositorios Mock\n[passengerRepository, flightRepository]"]
+        Store["Almacén de Estados\n[processingStore.ts]"]
+        RatePort["Puerto ExchangeRateProvider\n[exchangeRateProvider.ts]"]
+        RateClient["Cliente HTTP y Caché\n[exchangeRateApiClient, ratesCache]"]
+    end
+
+    subgraph CrossCutting["Módulos Transversales (Transversal / Shared)"]
+        Domain["Dominio y Contexto\n[types.ts, reservationContext.ts]"]
+        Config["Configuración y Entorno\n[env.ts, pipelineConfig.ts]"]
+        Support["Soporte Técnico\n[logger.ts, clock.ts, money.ts]"]
+    end
+
+    %% Relaciones de uso (estrictamente descendentes)
+    Routes --> Service
+    Routes --> Schemas
+    Routes --> ErrorHandler
+
+    Service --> Runner
+    Service --> Registry
+    Service --> Mapper
+    Service --> Repos
+    Service --> Store
+    Service --> RateClient
+
+    Runner --> FilterInterface
+    Runner --> Guard
+    Runner --> F1 & F2 & F3 & F4 & F5 & F6 & F7 & F8
+
+    F1 & F2 --> Repos
+    F3 --> RatePort
+    RateClient -.->|implementa| RatePort
+
+    %% Dependencias transversales (todos pueden usar dominio, config y soporte)
+    PresentationLayer -.-> Domain & Config & Support
+    ApplicationLayer -.-> Domain & Config & Support
+    ProcessingLayer -.-> Domain & Config & Support
+    IntegrationLayer -.-> Domain & Config & Support
+
+    %% Leyenda
+    classDef pres fill:#e7f5ff,stroke:#1971c2,stroke-width:1px;
+    classDef app fill:#e6fcf5,stroke:#0ca678,stroke-width:1px;
+    classDef proc fill:#fff4e6,stroke:#f76707,stroke-width:1px;
+    classDef data fill:#f3f0ff,stroke:#7950f2,stroke-width:1px;
+    classDef cross fill:#f8f9fa,stroke:#495057,stroke-width:1px,stroke-dasharray: 4 4;
+
+    class Routes,Schemas,ErrorHandler pres;
+    class Service,Mapper app;
+    class Runner,Guard,FilterInterface,Registry,F1,F2,F3,F4,F5,F6,F7,F8 proc;
+    class Repos,Store,RatePort,RateClient data;
+    class Domain,Config,Support cross;
+```
+
+**Reglas de acoplamiento destacadas en la vista:**
+1. **Ningún filtro usa a otro filtro:** los filtros solo interactúan a través de la lectura y emisión de `ReservationContext` ([ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md)).
+2. **Inversión de dependencias en I/O:** el filtro 3 (`exchangeRateEnrichment`) consume exclusivamente la interfaz abstracta `ExchangeRateProvider`, desacoplándose de los detalles de red de `ExchangeRateApiClient` ([ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md)).
+3. **Capas unidireccionales:** los controladores no saltan capas hacia los filtros o repositorios; el servicio actúa como mediador de aplicación.
+
+---
+
+#### 3.2.4 Catálogo de elementos de módulos
+
+| Elemento | Paquete | Responsabilidad principal |
+|---|---|---|
+| `app.ts` / `server.ts` | `src/` | Inicialización de Express, cableado de dependencias e inicio del servidor HTTP en el puerto configurado. |
+| `reservations.routes.ts` | `src/api/` | Mapeo de endpoints `POST /reservations/process` y `GET /reservations/:id/status`. |
+| `pipeline.routes.ts` | `src/api/` | Mapeo de endpoints de configuración `GET/PUT /pipeline/config` e invalidación `POST /pipeline/cache/invalidate`. |
+| `schemas.ts` | `src/api/` | Definición de esquemas Zod y validación estricta del cuerpo HTTP de entrada. |
+| `errorHandler.ts` | `src/api/` | Middleware central de captura de errores HTTP y mapeo uniforme a formato JSON. |
+| `env.ts` | `src/config/` | Carga y validación *fail-fast* de variables de entorno del sistema (`PORT`, `EXCHANGE_API_BASE_URL`, `LOG_LEVEL`). |
+| `pipelineConfig.ts` | `src/config/` | Esquema de configuración de filtros y almacén inmutable `PipelineConfigStore`. |
+| `types.ts` | `src/domain/` | Definición canónica de tipos del dominio: reservas, pasajeros, vuelos, desglose de precio y estados. |
+| `reservationContext.ts` | `src/domain/` | Estructura inmutable `ReservationContext`, creador de contexto y funciones puras de reporte de incidencias. |
+| `age.ts` | `src/domain/` | Algoritmo determinista de cálculo de edad cumplida a la fecha de partida del vuelo. |
+| `pipeline.ts` | `src/pipeline/` | Orquestador de Pipes & Filters (`Pipeline`), ejecución secuencial de etapas, medición de tiempos y aislamiento de fallos. |
+| `filter.ts` | `src/pipeline/` | Definición del contrato formal `Filter` y sus dependencias (`FilterDependencies`). |
+| `registry.ts` | `src/pipeline/` | Catálogo de fábricas de filtros (`FILTER_FACTORIES`) y constructor de pipeline. |
+| `context-guard.ts` | `src/pipeline/` | Monitor supervisor de invariantes post-filtro (números finitos, no negativos y montos requeridos). |
+| Filtros (1 al 8) | `src/pipeline/filters/` | Implementaciones concretas de validación, cotización, cálculo tarifario y conversión local. |
+| `reservationProcessingService.ts` | `src/services/` | Orquestador de aplicación: actúa como Source (validación previa e inicialización), ejecuta el pipeline y gestiona el Store. |
+| `reservationResult.ts` | `src/services/` | Proyector de salida (Sink): transforma el contexto interno en el contrato público JSON y aplica redondeo contable a 2 decimales. |
+| `exchangeRateProvider.ts` | `src/services/exchangeRate/` | Interfaz del puerto de tasas de cambio y definiciones de errores de integración. |
+| `exchangeRateApiClient.ts` | `src/services/exchangeRate/` | Cliente HTTP resiliente con timeout, reintentos con backoff y jitter, y enlace con la caché. |
+| `ratesCache.ts` | `src/services/exchangeRate/` | Estructura de caché en memoria con TTL de 1 hora y soporte para degradación a tasa vencida (*stale*). |
+| `countryCurrency.ts` | `src/services/exchangeRate/` | Mapeo de códigos de país ISO alpha-2 a códigos de moneda ISO-4217. |
+| `passengerRepository.ts` | `src/repositories/` | Repositorio en memoria de consulta de pasajeros indexados por ID. |
+| `flightRepository.ts` | `src/repositories/` | Repositorio en memoria de consulta de vuelos indexados por código de vuelo. |
+| `processingStore.ts` | `src/store/` | Almacén de historial de estados recientes en memoria acotado a 1000 registros FIFO. |
+| `mockPassengers.ts` / `mockFlights.ts` | `src/data/` | Fábricas de colecciones de prueba deterministas calculadas a partir del reloj provisto. |
+| `logger.ts` | `src/support/` | Envoltorio sobre la librería Pino para emisión de logs estructurados con `correlationId`. |
+| `clock.ts` | `src/support/` | Abstracción de reloj inyectable para evitar llamadas no deterministas a `new Date()`. |
+| `money.ts` | `src/support/` | Función de redondeo contable determinista a 2 decimales (`round2`). |
+
+---
+
+#### 3.2.5 Interfaces de módulos
+
+| Interfaz | Paquete que la implementa | Servicio provisto | Descripción y semántica de errores |
+|---|---|---|---|
+| `Filter` | `src/pipeline/filters/*` | `execute(ctx): Promise<ReservationContext>` | Síncrono/Asíncrono en memoria. Recibe un contexto y retorna uno nuevo. Los errores de negocio marcan `issues` sin lanzar; las excepciones indican fallos no controlados. |
+| `ExchangeRateProvider` | `src/services/exchangeRate/exchangeRateApiClient.ts` | `getRates(base, opts): Promise<RatesResult>` | Asíncrono remoto/local. Devuelve mapa de tasas y origen (`api`, `cache`, `stale-cache`). Lanza `ExchangeRateError` si es irrecuperable. |
+| `PassengerRepository` | `src/repositories/passengerRepository.ts` | `findById(id): Passenger \| undefined` | Síncrono en memoria. Retorna el pasajero mock correspondiente o `undefined` si no existe. |
+| `FlightRepository` | `src/repositories/flightRepository.ts` | `findByCode(code): Flight \| undefined` | Síncrono en memoria. Retorna el vuelo mock correspondiente (insensible a mayúsculas) o `undefined`. |
+| `ProcessingStore` | `src/store/processingStore.ts` | `saveResult(res)`, `find(id)` | Síncrono en memoria. Almacena o consulta el estado de una reserva aplicando límite FIFO de 1000 entradas. |
+
+---
+
+#### 3.2.6 Comportamiento en vistas de módulos
+
+##### D4: Secuencia de procesamiento del lote (`POST /reservations/process`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as Cliente HTTP
+    participant Route as ReservationsRouter
+    participant Service as ProcessingService (Source)
+    participant Pipe as Pipeline Runner
+    participant Filters as Filtros 1 a 8
+    participant Guard as ContextGuard
+    participant Sink as Mapper (Sink)
+    participant Store as ProcessingStore
+
+    Client->>Route: POST /reservations/process { reservations, config? }
+    Route->>Route: Validar sobre global (Zod)
+    Route->>Service: processBatch(items, configOverrides, correlationId)
+    Service->>Service: Tomar snapshot inmutable de configuración
+    
+    par Para cada reserva del lote (Promise.all)
+        Service->>Store: saveStatus(id, PROCESSING)
+        Service->>Service: Validar ítem con singleReservationSchema
+        alt Reserva malformada
+            Service->>Sink: buildInvalidResult(id, INVALID_RESERVATION)
+            Service->>Store: saveResult(id, REJECTED)
+        else Reserva con esquema válido
+            Service->>Service: Inicializar ReservationContext (Source)
+            Service->>Pipe: process(context, correlationId)
+            loop Para cada uno de los 8 filtros
+                alt Filtro habilitado y contexto no abortado
+                    Pipe->>Filters: execute(ctx)
+                    Filters-->>Pipe: nuevo ctx
+                    Pipe->>Guard: validateContextInvariants(ctx)
+                    alt Guard detecta NaN o negativo
+                        Guard-->>Pipe: Invariante violada
+                        Pipe->>Pipe: Marcar FAILED (DATA_CORRUPTED)
+                    end
+                else Filtro deshabilitado o abortado
+                    Pipe->>Pipe: Registrar SKIPPED o NOT_RUN en trace
+                end
+            end
+            Pipe-->>Service: context finalizado
+            Service->>Sink: toReservationResult(ctx)
+            Sink-->>Service: ReservationResult (redondeado)
+            Service->>Store: saveResult(id, status)
+        end
+    end
+
+    Service-->>Route: ProcessBatchResponse { summary, results, processingTimeMs }
+    Route-->>Client: HTTP 200 JSON
+```
+
+**Leyenda de notación:** Llamadas locales asíncronas dentro del mismo proceso Node.js; no existen llamadas de red en este flujo a excepción de la consulta externa dentro del Filtro 3.
+
+---
+
+##### D5: Secuencia de falla y resiliencia de la API de tipo de cambio (Filtro 3)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant F3 as Filtro 3 (exchangeRateEnrichment)
+    participant Cache as RatesCache
+    participant Client as ExchangeRateApiClient
+    participant API as ExchangeRate-API (Remoto)
+
+    F3->>Client: getRates("USD", { timeout: 5000, maxAttempts: 3 })
+    Client->>Cache: get("USD")
+    alt Tasa en caché vigente (hit)
+        Cache-->>Client: { rates, source: "cache" }
+        Client-->>F3: RatesResult ("cache")
+    else Caché vencida o vacía (miss)
+        Client->>Client: Comprobar single-flight
+        alt Petición idéntica en vuelo
+            Client->>Client: Reutilizar promesa en curso
+        else Iniciar nueva petición
+            loop Intento 1..3 (con backoff 200/400ms + jitter)
+                Client->>API: GET /v4/latest/USD (timeout 5s)
+                alt Respuesta HTTP 200 válida
+                    API-->>Client: 200 OK { base: "USD", rates: {...} }
+                    Client->>Cache: set("USD", rates)
+                    Client-->>F3: RatesResult ("api")
+                else Timeout (5s) o Error 5xx/429
+                    API-->>Client: Fallo transitorio / sin respuesta
+                    Client->>Client: Esperar backoff si quedan intentos
+                end
+            end
+            alt Agotados los 3 intentos sin éxito
+                Client->>Cache: getStale("USD")
+                alt Existe tasa vencida en caché
+                    Cache-->>Client: Tasa vencida
+                    Client-->>F3: RatesResult ("stale-cache")
+                    F3->>F3: ctx.exchangeRate = rate; addWarning(STALE_RATE)
+                else Sin caché previa
+                    Client-->>F3: Lanza ExchangeRateUnavailableError
+                    F3->>F3: addWarning(EXCHANGE_RATE_UNAVAILABLE); ctx.conversion = null
+                end
+            end
+        end
+    end
+```
+
+---
+
+##### D6: Diagrama de estados del ciclo de vida de una reserva
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Recepción del request HTTP
+    PENDING --> PROCESSING: Inicio de ejecución en el servicio
+    
+    PROCESSING --> REJECTED: Validación de entrada fallida (INVALID_RESERVATION)
+    PROCESSING --> REJECTED: Regla de negocio no superada (NO_SEATS, PASSENGER_NOT_FOUND, etc.)
+    PROCESSING --> FAILED: Excepción en filtro crítico (FILTER_EXCEPTION)
+    PROCESSING --> FAILED: Invariante rota detectada por Guard (DATA_CORRUPTED)
+    
+    PROCESSING --> CONFIRMED: Todos los filtros superados exitosamente
+    
+    CONFIRMED --> [*]: Respuesta HTTP 200 emitida y guardada en Store
+    REJECTED --> [*]: Respuesta HTTP 200 emitida y guardada en Store
+    FAILED --> [*]: Respuesta HTTP 200 emitida y guardada en Store
+
+    note right of CONFIRMED
+        La reserva puede poseer warnings acumulados
+        (e.g. STALE_RATE o EXCHANGE_RATE_UNAVAILABLE)
+        sin degradar su estado CONFIRMED.
+    end note
+```
+
+---
+
+##### D7: Modelo de datos en memoria
+
+```mermaid
+classDiagram
+    class ReservationInput {
+        +string id
+        +string passengerId
+        +string flightCode
+        +string origin
+        +string destination
+        +string departureDate
+        +SeatClass seatClass
+        +PassengerType passengerType
+    }
+
+    class Passenger {
+        +string id
+        +string name
+        +string email
+        +string birthDate
+        +string country
+        +LoyaltyTier loyaltyTier
+        +boolean isActive
+    }
+
+    class Flight {
+        +string code
+        +string flightCode
+        +string origin
+        +string destination
+        +string originCountry
+        +string destinationCountry
+        +string departureAt
+        +number durationMinutes
+        +number baseFare
+        +number availableSeats
+        +string airline
+    }
+
+    class PriceBreakdown {
+        +number baseFare
+        +number classPrice
+        +number currentPrice
+        +number loyaltyDiscount
+        +number passengerTypeDiscount
+        +number subtotal
+        +number taxes
+        +number fuelSurcharge
+        +number airportFee
+        +number total
+    }
+
+    class ConversionResult {
+        +string currency
+        +number rate
+        +ExchangeRateSource source
+        +string fetchedAt
+        +number baseFareLocal
+        +number totalLocal
+    }
+
+    class ProcessingIssue {
+        +string filter
+        +string code
+        +string message
+        +IssueSeverity severity
+        +any details
+    }
+
+    class ReservationContext {
+        +ReservationRequest request
+        +ReservationStatus status
+        +boolean aborted
+        +Passenger passenger
+        +Flight flight
+        +PriceBreakdown pricing
+        +ExchangeRateData exchangeRate
+        +LocalConversionData conversion
+        +ProcessingIssue[] issues
+        +FilterTrace[] trace
+        +Record metadata
+    }
+
+    class ReservationResult {
+        +string reservationId
+        +ReservationStatus status
+        +object passenger
+        +object flight
+        +PriceBreakdown pricing
+        +ConversionResult conversion
+        +ProcessingIssue[] errors
+        +ProcessingIssue[] warnings
+        +FilterTrace[] trace
+        +string processedAt
+    }
+
+    ReservationContext *-- ReservationInput : envuelve
+    ReservationContext o-- Passenger : referencia
+    ReservationContext o-- Flight : referencia
+    ReservationContext *-- PriceBreakdown : contiene
+    ReservationContext *-- ConversionResult : contiene
+    ReservationContext *-- ProcessingIssue : acumula
+    ReservationResult <.. ReservationContext : proyectado desde
+```
+
+---
+
+### 3.3 Vistas de componentes y conectores (C&C)
+
+#### 3.3.1 Representación primaria (D8)
+
+La vista de Componentes y Conectores en ejecución muestra la tubería del pipeline, los conectores asíncronos en memoria entre filtros, y las dependencias de acceso a repositorios y servicios externos.
+
+```mermaid
+flowchart LR
+    subgraph ClientZone["Ambiente Cliente"]
+        HTTPClient["Cliente HTTP REST\n[Postman / Frontend]"]
+    end
+
+    subgraph ProcessBoundary["Proceso Node.js (Servidor de Aplicación)"]
+        subgraph APITier["Módulo de Entrada"]
+            Server["Servidor Express\n[app.ts]"]
+        end
+
+        subgraph PipeLineSystem["Arquitectura Pipes & Filters"]
+            Source["Source: Validación Inicial\ny Enriquecimiento de Contexto"]
+            
+            P1(["pipe local async"])
+            F1["F1: validatePassenger\n«critical: true»"]
+            
+            P2(["pipe local async"])
+            F2["F2: validateFlight\n«critical: true»"]
+            
+            P3(["pipe local async"])
+            F3["F3: exchangeRateEnrichment\n«critical: false»"]
+            
+            P4(["pipe local async"])
+            F4["F4: basePrice\n«critical: true»"]
+            
+            P5(["pipe local async"])
+            F5["F5: loyaltyDiscount\n«critical: true»"]
+            
+            P6(["pipe local async"])
+            F6["F6: passengerTypeAdjustment\n«critical: true»"]
+            
+            P7(["pipe local async"])
+            F7["F7: taxesAndFees\n«critical: true»"]
+            
+            P8(["pipe local async"])
+            F8["F8: currencyConversion\n«critical: false»"]
+            
+            P9(["pipe local async"])
+            Sink["Sink: Proyector de Salida\n[toReservationResult]"]
+        end
+
+        subgraph SupportStores["Almacenes y Servicios en Memoria"]
+            PassRepo[("PassengerRepository\n[Map en Memoria]")]
+            FlightRepo[("FlightRepository\n[Map en Memoria]")]
+            ProcStore[("ProcessingStore\n[Map 1000 ítems FIFO]")]
+            Cache[("RatesCache\n[TTL 1h en Memoria]")]
+            Logger["Pino Logger\n[Streaming estructurado]"]
+        end
+
+        subgraph Adapters["Adaptador Externo"]
+            ApiClient["ExchangeRateApiClient\n[Timeout 5s, Retry 3x, Single-flight]"]
+        end
+    end
+
+    subgraph CloudZone["Nube Pública"]
+        ExternalAPI["ExchangeRate-API\n[api.exchangerate-api.com]"]
+    end
+
+    %% Conectores de flujo
+    HTTPClient -->|"HTTP POST /reservations/process\n[Síncrono, JSON]"| Server
+    Server -->|"Invocación local"| Source
+    Source --> P1 --> F1 --> P2 --> F2 --> P3 --> F3 --> P4 --> F4 --> P5 --> F5 --> P6 --> F6 --> P7 --> F7 --> P8 --> F8 --> P9 --> Sink
+    Sink -->|"Almacenar estado final"| ProcStore
+    Sink -->|"Retorno de BatchResult"| Server
+    Server -->|"Respuesta HTTP 200 JSON"| HTTPClient
+
+    %% Interacciones con almacenes y adaptadores
+    Source -.->|"Lectura"| PassRepo & FlightRepo
+    F1 -.->|"Consulta existencia/estado"| PassRepo
+    F2 -.->|"Consulta asientos/ruta"| FlightRepo
+    F3 -->|"Consulta tasa"| ApiClient
+    ApiClient <-->|"Lectura/Escritura"| Cache
+    ApiClient -->|"HTTPS GET remoto\n[Timeout 5s, 3 intentos]"| ExternalAPI
+    
+    PipeLineSystem -.->|"Eventos y trazas"| Logger
+
+    %% Estilos y Clases
+    classDef client fill:#e7f5ff,stroke:#1971c2,stroke-width:2px;
+    classDef filter fill:#fff4e6,stroke:#f76707,stroke-width:2px;
+    classDef pipe fill:#dee2e6,stroke:#495057,stroke-width:1px;
+    classDef store fill:#f3f0ff,stroke:#7950f2,stroke-width:2px;
+    classDef external fill:#fff3bf,stroke:#f08c00,stroke-width:2px;
+
+    class HTTPClient client;
+    class F1,F2,F3,F4,F5,F6,F7,F8 filter;
+    class P1,P2,P3,P4,P5,P6,P7,P8,P9 pipe;
+    class PassRepo,FlightRepo,ProcStore,Cache store;
+    class ExternalAPI external;
+```
+
+**Leyenda de notación del diagrama C&C:**
+- **Rectángulos naranjas («filter»):** Filtros de procesamiento que reciben y devuelven un `ReservationContext` inmutable.
+- **Óvalos grises («pipe»):** Conectores locales asíncronos implementados mediante promesas (`await`) que transfieren el contexto de una etapa a la siguiente.
+- **Cilindros violetas:** Almacenes de datos en memoria (repositorios mock y caché volátil).
+- **Líneas sólidas:** Flujo principal de datos y llamadas de invocación directa.
+- **Líneas punteadas:** Consultas de lectura o emisión de telemetría hacia almacenes auxiliares.
+
+---
+
+#### 3.3.2 Catálogo de elementos C&C
+
+| Componente / Conector | Tipo | Descripción |
+|---|---|---|
+| `HTTPClient` | Componente | Cliente REST consumidor de los servicios de reservas y configuración. |
+| `Server (Express)` | Componente | Servidor HTTP que atiende peticiones de red y coordina el enrutamiento. |
+| `Source` | Componente | Validador sintáctico y cargador del contexto inicial con entidades mock. |
+| `Filtros 1 a 8` | Componentes | Unidades atómicas de procesamiento y cómputo de la reserva. |
+| `Sink` | Componente | Ensamblador de salida que genera la respuesta JSON pública y aplica redondeo contable. |
+| `Pipes (P1 a P9)` | Conector | Conector local asíncrono en memoria basado en resolución de promesas Node.js. |
+| `RatesCache` | Componente | Almacén de cotizaciones en memoria con expiración por tiempo (TTL 1h). |
+| `ExchangeRateApiClient` | Componente | Adaptador cliente que implementa detección de fallas, reintentos y consolidación de peticiones (*single-flight*). |
+| `ProcessingStore` | Componente | Almacén de historial de estados recientes acotado a 1000 registros FIFO. |
+| `Conector HTTPS Remoto` | Conector | Enlace de red cifrado de salida hacia `https://api.exchangerate-api.com/v4/latest/`. |
+
+---
+
+#### 3.3.3 Interfaces C&C
+
+| Interfaz | Componente que la provee | Servicio provisto | Descripción |
+|---|---|---|---|
+| `POST /reservations/process` | `Server (Express)` | Procesamiento de lotes de reservas | Síncrono HTTP/JSON. Acepta sobre de 1 a 100 reservas. Devuelve resumen y resultados con código HTTP 200. |
+| `GET /reservations/:id/status` | `Server (Express)` | Consulta de estado de reserva | Síncrono HTTP/JSON. Retorna estado reciente (`CONFIRMED`, `REJECTED`, `FAILED`) o HTTP 404. |
+| `PUT /pipeline/config` | `Server (Express)` | Modificación de configuración | Síncrono HTTP/JSON. Aplica parche de configuración con validación Zod retornando HTTP 200 o 400. |
+| `POST /pipeline/cache/invalidate` | `Server (Express)` | Purga de caché de tasas | Síncrono HTTP. Limpia la caché en memoria y responde HTTP 204 No Content. |
+| `ExchangeRateProvider` | `ExchangeRateApiClient` | Suministro de tasas de cambio | Asíncrono en memoria/remoto. Retorna `RatesResult` con fuente (`api`, `cache`, `stale-cache`). |
+
+---
+
+#### 3.3.4 Comportamiento C&C
+
+El comportamiento dinámico en ejecución entre componentes y conectores reutiliza los diagramas de secuencia presentados en las secciones 3.2.6:
+- **D4:** Ciclo de vida completo del procesamiento de un lote concurrente.
+- **D5:** Interacción de contingencia ante caídas de conectividad con la API remota.
+
+---
+
+#### 3.3.5 Relación con elementos lógicos
+
+| Componente C&C | Paquetes y archivos lógicos que lo construyen |
+|---|---|
+| Servidor y Ruteo | `src/app.ts`, `src/server.ts`, `src/api/reservations.routes.ts`, `src/api/pipeline.routes.ts` |
+| Orquestador y Tuberías | `src/pipeline/pipeline.ts`, `src/pipeline/filter.ts`, `src/pipeline/context-guard.ts` |
+| Filtros de Validación (F1, F2) | `src/pipeline/filters/validatePassenger.filter.ts`, `src/pipeline/filters/validateFlight.filter.ts` |
+| Filtro de Cotización (F3) | `src/pipeline/filters/exchangeRateEnrichment.filter.ts` |
+| Filtros Tarifarios (F4, F5, F6, F7) | `src/pipeline/filters/basePrice.filter.ts`, `src/pipeline/filters/loyaltyDiscount.filter.ts`, `src/pipeline/filters/passengerTypeAdjustment.filter.ts`, `src/pipeline/filters/taxesAndFees.filter.ts` |
+| Filtro de Conversión Local (F8) | `src/pipeline/filters/currencyConversion.filter.ts` |
+| Source y Sink | `src/services/reservationProcessingService.ts`, `src/services/reservationResult.ts` |
+| Cliente de Tasas y Caché | `src/services/exchangeRate/exchangeRateApiClient.ts`, `src/services/exchangeRate/ratesCache.ts` |
+| Repositorios y Almacenes | `src/repositories/passengerRepository.ts`, `src/repositories/flightRepository.ts`, `src/store/processingStore.ts` |
+| Telemetría y Configuración | `src/support/logger.ts`, `src/config/pipelineConfig.ts`, `src/config/env.ts` |
+
+---
+
+#### 3.3.6 Decisiones de diseño y guía de variabilidad
+
+##### Decisiones de diseño C&C
+- **Pipes & Filters en memoria:** justificado en [ADR-001](../adr/ADR-001-pipes-and-filters.md). Se prefiere sobre colas distribuidas por simplicidad operativa y latencia determinista.
+- **Aislamiento por criticidad:** justificado en [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md). Los filtros críticos abortan la reserva particular; los filtros no críticos agregan warnings y degradan grácilmente.
+- **División F3 / F8:** justificado en [ADR-007](../adr/ADR-007-separacion-enriquecimiento-conversion.md). Separa I/O de red en etapa temprana del cálculo aritmético de conversión al final del flujo.
+- **Adopción de Pino para observabilidad:** no requiere ADR por constituir una decisión de detalle técnico de implementación. Provee logging asíncrono de alto desempeño en formato JSON estructurado hacia stdout, adjuntando `correlationId`, nombre del filtro, estado y `durationMs` para cada paso, evitando el bloqueo de I/O que produce `console.log`.
+
+##### Guía de variabilidad
+El sistema ofrece los siguientes puntos de variación configurables sin alterar el código fuente:
+1. **Activación de filtros en caliente:** mediante `PUT /pipeline/config`, modificando el mapa `enabledFilters` (`true`/`false`). Permite omitir descuentos de lealtad, ajustes de edad o conversión local.
+2. **Parámetros de cálculo comercial:** modificables en el cuerpo del `PUT /pipeline/config` (multiplicadores por clase, porcentajes de lealtad, tasas de impuestos y recargo por combustible).
+3. **Overrides por request:** cada `POST /reservations/process` puede incluir una sección `config` que ajusta parámetros exclusivamente para ese lote particular. Se prohíbe sobreescribir `exchangeRate` por razones de seguridad.
+4. **Variables de entorno:** configuración de infraestructura en arranque (`PORT`, `LOG_LEVEL` y `EXCHANGE_API_BASE_URL`).
+5. **Sustitución de fuentes de datos:** los repositorios de pasajeros y vuelos se inyectan en `ReservationProcessingService`, permitiendo sustituir los mocks en memoria por implementaciones con bases de datos relacionales sin tocar el pipeline.
+6. **Límites de dimensionamiento:** tamaño máximo de lote acotado a 100 reservas (validado en `processReservationsSchema`); historial en memoria acotado a 1000 entradas FIFO en `ProcessingStore`.
+
+---
+
+### 3.4 Vistas de asignación
+
+#### 3.4.1 Vista de despliegue (D9)
+
+La vista de despliegue exhibe la asignación física del software en nodos computacionales y su interconexión mediante la red.
+
+```mermaid
+deploymentDiagram
+    node ClientNode as "Nodo Cliente\n[Estación de Trabajo / Postman / Runner CI]" {
+        artifact PostmanColl as "flight-reservations.postman_collection.json"
+        artifact TestSuite as "Suite Jest / Supertest"
+    }
+
+    node ServerHost as "Nodo Servidor de Aplicación\n[Host Físico / VM / Contenedor]\nOS: Linux / Windows / macOS" {
+        node NodeRuntime as "Entorno de Ejecución Node.js\n[Node.js >= 22 (LTS)]" {
+            component AppProcess as "Proceso: flight-reservation-pipeline\n[PID en memoria]\nEscucha en 0.0.0.0:3000" {
+                artifact DistBundle as "dist/server.js\n(JavaScript compilado)"
+                artifact MemoryState as "Estado en Memoria RAM\n(Caché 1h, Repos Mock, Store 1000)"
+            }
+        }
+    }
+
+    node CloudAPI as "Nodo Externo: ExchangeRate-API Cloud\n[Infraestructura de Terceros]" {
+        component APIService as "ExchangeRate-API v4 Endpoint\nhttps://api.exchangerate-api.com"
+    }
+
+    ClientNode -- ServerHost : Conector HTTP Local/LAN [TCP/IP:3000]\nLlamadas síncronas REST JSON
+    ServerHost -- CloudAPI : Conector HTTPS WAN [TCP/IP:443]\nTLS 1.3, Timeout 5s, 3 intentos
+```
+
+**Distinción fundamental: Layers ≠ Tiers:**
+Todas las capas lógicas de módulos documentadas en la sección 3.2 (rutas, controladores, servicios, tubería de filtros y repositorios en memoria) residen y se ejecutan dentro de **un único tier físico** (el proceso `AppProcess` de Node.js). El único límite físico distribuido del sistema lo constituye la conexión WAN hacia el nodo externo `CloudAPI`.
+
+##### Catálogo de nodos
+| Nodo | Características de hardware / entorno | Descripción |
+|---|---|---|
+| `Nodo Cliente` | CPU x86_64/ARM64, conexión TCP/IP hacia el servidor. | Estación de trabajo o agente automatizado que ejecuta Postman o las pruebas de integración. |
+| `Nodo Servidor de Aplicación` | CPU >= 2 cores, RAM >= 512 MB, Node.js >= 22. | Host de ejecución donde corre la instancia única del servidor Express compilado. |
+| `Nodo Externo ExchangeRate-API` | Nube de alta disponibilidad, endpoint HTTPS público. | Infraestructura de terceros que provee las cotizaciones de divisas. |
+
+##### Catálogo de conectores de red
+| Conector | Protocolo y características | Descripción |
+|---|---|---|
+| `HTTP Local/LAN` | HTTP/1.1 sobre TCP puerto 3000 (configurable vía `PORT`). Cargas útiles JSON. | Canal de invocación de endpoints de procesamiento y administración. |
+| `HTTPS WAN` | HTTPS sobre TCP puerto 443 (TLS 1.2/1.3). Peticiones GET síncronas con timeout estricto de 5000 ms. | Canal de integración externa con el servicio de tipo de cambio. |
+
+---
+
+#### 3.4.2 Vista de instalación
+
+La vista de instalación describe la composición física de los artefactos generados y los procedimientos operativos para desplegar el sistema.
+
+```markdown
+| Artefacto / Directorio | Origen | Descripción |
+|---|---|---|
+| `dist/` | Generado por `npm run build` | Código JavaScript emitido por TypeScript (`tsc -p tsconfig.json`), listo para ejecución en producción. |
+| `node_modules/` | Generado por `npm install` o `npm ci` | Dependencias de ejecución y desarrollo fijadas en versiones exactas. |
+| `package.json` / `package-lock.json` | Control de versiones | Definición de metadatos, comandos y árbol determinista de dependencias congeladas (`save-exact=true`). |
+| `.env.example` / `.env` | Plantilla versionada / Archivo local | Parámetros de entorno validados al inicio (`PORT`, `EXCHANGE_API_BASE_URL`, `LOG_LEVEL`). |
+| `postman/` | Control de versiones | Colección con los 16 casos de prueba de la consigna y respuestas guardadas. |
+```
+
+**Secuencia de comandos de instalación y arranque:**
+```bash
+# 1. Instalación determinista de dependencias congeladas
+npm install
+
+# 2. Verificación estricta de tipos de código fuente y pruebas
+npm run typecheck
+
+# 3. Verificación de reglas de estilo y buenas prácticas
+npm run lint
+
+# 4. Compilación de código TypeScript a JavaScript en dist/
+npm run build
+
+# 5. Ejecución del proceso en producción (cargando variables de entorno si existen)
+npm start
+```
+
+---
+
+## 4. Anexos
+
+### Anexo A: Atributo → Táctica → Tecnología
+
+| Atributo de Calidad | Táctica (Bass et al.) | Implementación y Tecnología concreta |
+|---|---|---|
+| **AC 1 Disponibilidad** | Detección de fallas | `AbortSignal.timeout(5000)` en llamada nativa `fetch` de Node.js. |
+| **AC 1 Disponibilidad** | Reintento transitorio (*Retry*) | Bucle de 3 intentos con backoff exponencial (200/400 ms) y jitter en `ExchangeRateApiClient`. |
+| **AC 1 Disponibilidad** | Degradación grácil | Uso de tasa vencida (`stale-cache`) o continuación en USD con warning `EXCHANGE_RATE_UNAVAILABLE`. |
+| **AC 1, AC 7 Confiabilidad** | Validación de precondiciones en fronteras | Esquemas Zod estrictos en body HTTP, variables de entorno y respuestas JSON de la API. |
+| **AC 2 Modificabilidad** | Encapsulamiento y bajo acoplamiento | Interfaz `Filter`; filtros independientes que no se conocen entre sí ni conocen el orquestador. |
+| **AC 2, AC 6 Testeabilidad** | Abstraer servicios comunes / Intermediario | Puerto `ExchangeRateProvider` (DIP) y capa anticorrupción frente a la API externa. |
+| **AC 3 Modificabilidad en runtime** | Vinculación diferida (*Deferred binding*) | `PUT /pipeline/config` con snapshot inmutable por lote resuelto en `ReservationProcessingService`. |
+| **AC 4 Disponibilidad** | Aislamiento de fallos (*Fault containment*) | Orquestador `Pipeline` con bloques `try/catch` por filtro, criticidad y supervisión con `context-guard`. |
+| **AC 5 Rendimiento** | Mantenimiento de copias de datos (Caché) | `RatesCache` en memoria con TTL de 1 hora y compartición de promesas en vuelo (*single-flight*). |
+| **AC 6 Testeabilidad** | Fuentes de datos controlables | Inyección de dependencias (`Clock`, repositorios mock en memoria, stubs de tasas sin red). |
+| **Todos: Observabilidad** | Monitoreo estructurado | Pino logger emitiendo JSON con `correlationId`, nombre de filtro, estado y `durationMs`. |
+| **RS 6 Confiabilidad** | Arranque seguro (*Fail-fast*) | `src/config/env.ts` aborta el inicio del servidor si faltan variables obligatorias o son inválidas. |
+
+#### Pipes & Filters como paquete de tácticas y sus trade-offs
+El patrón Pipes & Filters agrupa de manera cohesiva diversas tácticas de modificabilidad y testeabilidad:
+- **Favorece la modificabilidad (AC 2, AC 3):** permite añadir, reconfigurar o deshabilitar filtros como cajas negras sin alterar el runner.
+- **Favorece la testeabilidad (AC 6):** cada filtro se verifica en aislamiento suministrando un contexto controlado.
+- **Favorece la observabilidad:** cada tubería es un punto de interceptación natural para telemetría y supervisión de invariantes (`context-guard`).
+- **Trade-off de rendimiento:** la indirección de tuberías y la creación de contextos inmutables introducen una ligera penalización de latencia y recolección de basura frente a una función monolítica procedural directa, trade-off plenamente justificado por la mantenibilidad del sistema.
+
+---
+
+### Anexo B: Matriz de trazabilidad
+
+| Requerimiento (RF / AC / RS) | Táctica de Diseño | Elemento de Implementación | ADR Vinculado | Test de Verificación |
 |---|---|---|---|---|
-| RF-01 | Procesar lote de reservas | `POST /reservations/process` aplica la cadena de filtros a cada reserva y devuelve resultados, resumen y tiempo total | Sistema cliente | Define la topologia del sistema: es el requerimiento que motiva el estilo Pipes & Filters |
-| RF-02 | Validar pasajero | Existencia, estado activo, contacto, coherencia edad/tipo | Sistema cliente | Introduce una decision de corte temprano del flujo y un modelo de errores fatales |
-| RF-03 | Validar vuelo | Existencia, asientos, ruta, fecha futura | Sistema cliente | Igual que RF-02; ademas aporta el pais de destino que RF-05 necesita |
-| RF-04 | Calcular precio | Clase, lealtad, tipo de pasajero, impuestos y tasas | Sistema cliente | Reglas volatiles que se parametrizan en configuracion y se reparten en cuatro filtros |
-| RF-05 | Enriquecer con tipo de cambio | Obtener tasas de una API externa y convertir el total | Sistema cliente / proveedor externo | Unico punto de I/O remoto: obliga a tacticas de disponibilidad y define un puerto de integracion |
-| RF-06 | Reportar errores, warnings y tiempos | Por reserva y por lote | Sistema cliente | Obliga a que el contexto acumule diagnostico en lugar de cortar con una excepcion |
-| RF-07 | Consultar estado de una reserva | `GET /reservations/:id/status` | Sistema cliente | Exige retener resultados fuera del ciclo del request |
-| RF-08 | Ver y modificar la configuracion del pipeline | `GET`/`PUT /pipeline/config`, incluida la habilitacion de filtros | Operador comercial | Convierte el orden y las reglas en datos mutables en runtime |
+| **RF 1** (Procesar lote) | Pipes & Filters en proceso | `Pipeline`, `ReservationProcessingService` | [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-008](../adr/ADR-008-estado-en-memoria-procesamiento-sincrono.md) | `tests/integration/consignaCases.test.ts` (Flujo básico 1) |
+| **RF 2** (Validar pasajero) | Validación y rechazo temprano | `validatePassenger.filter.ts`, `domain/age.ts` | [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md) | `tests/filters/validatePassenger.filter.test.ts` |
+| **RF 3** (Validar vuelo) | Validación y rechazo temprano | `validateFlight.filter.ts` | [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md) | `tests/filters/validateFlight.filter.test.ts` |
+| **RF 4** (Enriquecimiento de tasa) | Adaptador / Capa anticorrupción | `exchangeRateEnrichment.filter.ts`, `ExchangeRateApiClient` | [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md), [ADR-007](../adr/ADR-007-separacion-enriquecimiento-conversion.md) | `tests/filters/exchangeRateEnrichment.filter.test.ts` |
+| **RF 5** (Cálculo de precio) | Descuentos encadenados y tasas | `basePrice`, `loyaltyDiscount`, `passengerTypeAdjustment`, `taxesAndFees` | [ADR-004](../adr/ADR-004-formula-precio-encadenada.md) | `tests/filters/pricing.filters.test.ts` |
+| **RF 6** (Consultar estado) | Almacenamiento en memoria | `ProcessingStore`, `GET /reservations/:id/status` | [ADR-008](../adr/ADR-008-estado-en-memoria-procesamiento-sincrono.md) | `tests/api/reservations.routes.test.ts` |
+| **RF 7** (Ver configuración) | Consulta inmutable de estado | `PipelineConfigStore`, `GET /pipeline/config` | [ADR-006](../adr/ADR-006-configuracion-inmutable-snapshot.md) | `tests/api/pipeline.routes.test.ts` |
+| **RF 8** (Modificar configuración) | Snapshot y reemplazo atómico | `PUT /pipeline/config`, `PipelineConfigStore` | [ADR-006](../adr/ADR-006-configuracion-inmutable-snapshot.md) | `tests/api/pipeline.routes.test.ts` |
+| **RF 9** (Invalidar caché) | Limpieza de caché bajo demanda | `POST /pipeline/cache/invalidate`, `RatesCache` | [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md) | `tests/services/ratesCache.test.ts` |
+| **AC 1** (Disponibilidad) | Timeout, Retry y Degradación | `ExchangeRateApiClient`, `RatesCache` | [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md), [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md) | `tests/integration/qualityScenarios.test.ts` (AC 1) |
+| **AC 2** (Modificabilidad) | Interfaz `Filter` uniforme | `src/pipeline/pipeline.ts`, `src/pipeline/filter.ts` | [ADR-001](../adr/ADR-001-pipes-and-filters.md) | `tests/integration/qualityScenarios.test.ts` (AC 2) |
+| **AC 3** (Modificabilidad runtime) | Snapshot inmutable por lote | `PipelineConfigStore`, `ReservationProcessingService` | [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md), [ADR-006](../adr/ADR-006-configuracion-inmutable-snapshot.md) | `tests/integration/qualityScenarios.test.ts` (AC 3) |
+| **AC 4** (Aislamiento de fallos) | Supervisión y captura de errores | `Pipeline.runStep`, `context-guard.ts` | [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md), [ADR-003](../adr/ADR-003-fallos-criticidad-pipeline.md) | `tests/integration/qualityScenarios.test.ts` (AC 4) |
+| **AC 5** (Rendimiento) | Caché y single-flight | `RatesCache`, `ExchangeRateApiClient` | [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md) | `tests/integration/qualityScenarios.test.ts` (AC 5) |
+| **AC 6** (Testeabilidad) | Inyección de dependencias | Constructores con `FilterDependencies` y stubs | [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-005](../adr/ADR-005-integracion-tipo-de-cambio.md) | Suite completa en `tests/` |
+| **AC 7** (Confiabilidad entrada) | Validación granular con Zod | `singleReservationSchema`, `ReservationProcessingService` | [ADR-002](../adr/ADR-002-contexto-inmutable-guard-fronteras.md) | `tests/integration/qualityScenarios.test.ts` (AC 7) |
+| **RS 1 a RS 6** (Restricciones) | Configuración y entorno Node 22 | `package.json`, `tsconfig.json`, `src/config/env.ts` | [ADR-001](../adr/ADR-001-pipes-and-filters.md), [ADR-008](../adr/ADR-008-estado-en-memoria-procesamiento-sincrono.md) | Verificación de compilación `tsc` y linter `eslint` |
 
-(Todos Confirmada: consigna "Endpoints Requeridos" / "Filtros a Implementar" y su implementacion en `src/api/reservations.routes.ts`, `src/api/pipeline.routes.ts` y `src/pipeline/filters/`.)
+*Verificación de integridad: la matriz no contiene requerimientos sin elemento ni test, ni ADRs sin justificación de requerimiento.*
 
-### 2.2.2 Resumen de atributos de calidad
+---
 
-| RF relacionado | ID | Atributo | Descripcion | Prioridad | Estado de evidencia |
-|---|---|---|---|---|---|
-| RF-01, RF-04, RF-08 | QA-01 | Modificabilidad | Agregar, quitar o reordenar filtros y cambiar porcentajes sin modificar el orquestador ni otros filtros | Alta | Confirmada (`src/pipeline/registry.ts`, `src/config/pipelineConfig.ts`, prueba de reordenamiento en `tests/api/pipeline.routes.test.ts`) |
-| RF-05 | QA-02 | Disponibilidad ante fallo del tercero | El procesamiento sobrevive a timeout, error HTTP o caida total del proveedor | Alta | Confirmada (consigna lo exige; `exchangeRateApiClient.ts` y `tests/services/exchangeRateApiClient.test.ts`) |
-| RF-01, RF-06 | QA-03 | Robustez / aislamiento de fallos | Una excepcion en un filtro no aborta el lote ni tumba el proceso | Alta | Confirmada (`src/pipeline/pipeline.ts`, prueba "aisla la excepcion de un filtro") |
-| RF-02..RF-05 | QA-04 | Testabilidad | Cada filtro se prueba aislado, sin HTTP ni red | Alta | Confirmada (consigna "Aclaraciones"; `FilterDependencies` y 58 pruebas sin red) |
-| RF-05 | QA-05 | Rendimiento / eficiencia de la integracion | Evitar llamadas innecesarias al tercero y acotar la latencia por reserva | Media | Confirmada parcialmente (cache TTL 1 h y timeout 5 s implementados; presupuesto de latencia end-to-end: `Pendiente de validacion`) |
-| RF-06, RF-01 | QA-06 | Observabilidad / trazabilidad | Poder explicar que filtro hizo que y cuanto tardo | Media | Confirmada (`FilterTrace` en cada resultado, logger estructurado) |
-| RF-08 | QA-07 | Configurabilidad en runtime | Cambiar reglas y filtros habilitados sin reiniciar ni redeployar | Media | Confirmada (`PipelineConfigStore`, `PUT /pipeline/config`) |
-| RF-01, RF-08 | QA-08 | Seguridad | Control de acceso a la modificacion de reglas de negocio | Baja en el alcance actual | Propuesta (no implementada; ver ADR-005) |
+### Anexo C: Uso de Inteligencia Artificial
 
-### 2.2.3 Restricciones arquitectonicas
+En cumplimiento con el reglamento de la cátedra (`Condiciones de uso de IA en Obligatorios.pdf`), se documenta de forma transparente el uso de herramientas de Inteligencia Artificial Generativa:
 
-| ID | Tipo | Restriccion | Impacto arquitectonico |
+| Herramienta | Uso principal | Partes del sistema afectadas | Método de verificación humana |
 |---|---|---|---|
-| RT-01 | Tecnologica | Node.js + TypeScript + Express | Fija el runtime, el modelo de concurrencia (event loop, un solo hilo) y el framework HTTP |
-| RT-02 | Estilo impuesto | Debe usarse el patron Pipes & Filters | Elimina la eleccion de estilo: la discusion se traslada a como implementarlo (ADR-001, ADR-002) |
-| RT-03 | Datos | Pasajeros y vuelos mock en memoria, en archivos separados y faciles de modificar | Los repositorios son sincronicos; no hay latencia ni fallos de base de datos que tolerar |
-| RT-04 | Integracion | Proveedor publico de tipo de cambio, gratuito y con cuota mensual (ExchangeRate-API, sin API key) | Motiva la cache (cuota) y las tasas de respaldo (sin SLA) |
-| RT-05 | Integracion | Timeout maximo 5 s, hasta 3 reintentos, cache de tasas por 1 hora con invalidacion manual | Define directamente los parametros de las tacticas de disponibilidad |
-| RT-06 | Dominio | Todos los precios base estan en USD | Simplifica el calculo: una sola conversion al final |
-| RT-07 | Comportamiento ante fallos | Si la API de cambio falla, el procesamiento continua con warnings y precios en USD | Prohibe que un error de integracion se propague como error de negocio |
-| RT-08 | Dominio | Umbrales de edad: child < 12, senior > 65 | Regla de coherencia que el filtro de pasajero debe verificar, no solo usar para descuentos |
+| **Claude Code (Anthropic)** | Asistente de diseño, planificación técnica y revisión de código (*review* de diffs). | Planificación (`PLAN.md`), contratos de dominio y estructuración de la suite de pruebas. | Ejecución de suite de pruebas con Supertest, revisión manual de aserciones y auditoría de límites. |
+| **Google Antigravity (Gemini)** | Asistente de construcción, generación de diagramas Mermaid y redacción de documentación técnica SADP 2.0. | Implementación de filtros, orquestador, esquemas Zod, documentación de arquitectura y ADRs. | Compilación estricta `tsc`, linteo estricto `eslint`, cotejo visual de diagramas y revisión de código línea por línea. |
+| **Devin (`devin-local`)** | Análisis comparativo externo y exploración preliminar de riesgos. | Estructuración inicial de desgloses y definición de la separación del filtro 8. | Arbitraje y contraste crítico documentado en `docs/plan/PLAN-REVIEW-LOG.md`. |
 
-(Todas Confirmada: consigna, secciones "Integracion con API de Tipo de Cambio", "Estrategia de Validacion" y "Aclaraciones".)
-
-### 2.2.4 Restricciones organizacionales
-
-| ID | Restriccion | Descripcion | Impacto |
-|---|---|---|---|
-| RO-01 | Entregables fijos | Codigo TypeScript, pruebas, coleccion de Postman y README | Obliga a mantener documentacion y ejemplos ejecutables como parte del producto |
-| RO-02 | Ejercicio academico acotado | Sin infraestructura de despliegue, base de datos ni operacion real | Justifica estado en memoria y ausencia de seguridad (ADR-005, ADR-006) |
-| RO-03 | Filtros independientes y testeables por separado | Exigencia explicita de la consigna | Impone inyeccion de dependencias en los filtros y prohibe singletons dentro de ellos |
-| RO-04 | Casos de prueba requeridos | La consigna enumera escenarios obligatorios (flujo basico, precios, integracion, errores) | Los datos mock se disenan para cubrir cada escenario |
+**Declaración de autoría y responsabilidad:**
+Todo el código y la documentación generados con asistencia de modelos de IA fueron exhaustivamente inspeccionados, ajustados y validados contra los requerimientos de la cátedra. Los integrantes del equipo asumen total responsabilidad por el diseño, exactitud y defensa oral individual de cada componente arquitectónico implementado.
 
 ---
 
-## 3.4.1 Vista de componentes
-
-```
-                         ┌──────────────────────────────────────────┐
-  HTTP  ──────────────►  │  Capa API (Express)                      │
-                         │  routes + zod + errorHandler             │
-                         └───────────────┬──────────────────────────┘
-                                         │  ReservationRequest[] + overrides
-                         ┌───────────────▼──────────────────────────┐
-                         │  ReservationProcessingService            │
-                         │  compone config + dependencias           │
-                         └───────┬───────────────────────┬──────────┘
-                                 │                       │
-                 ┌───────────────▼─────────┐   ┌─────────▼──────────┐
-                 │  Pipeline (orquestador) │   │ PipelineConfigStore│
-                 │  secuencia + aislamiento│   │ (config mutable)   │
-                 └───────────────┬─────────┘   └────────────────────┘
-                                 │  ReservationContext
-   ┌─────────────────────────────▼───────────────────────────────────┐
-   │ validatePassenger → validateFlight → exchangeRateEnrichment →   │
-   │ basePrice → loyaltyDiscount → passengerTypeAdjustment →         │
-   │ taxesAndFees → currencyConversion                               │
-   └─────┬───────────────────┬───────────────────────────────────────┘
-         │                   │
- ┌───────▼────────┐  ┌───────▼───────────────┐      ┌────────────────┐
- │ Repositorios   │  │ ExchangeRateProvider  │◄────►│ ExchangeRate-  │
- │ (datos mock)   │  │ cliente + RatesCache  │      │ API (externo)  │
- └────────────────┘  └───────────────────────┘      └────────────────┘
-                                 │
-                       ┌─────────▼──────────┐
-                       │  ProcessingStore   │  (GET /reservations/:id/status)
-                       └────────────────────┘
-```
-
-Los filtros solo conocen el `ReservationContext` y su objeto de dependencias; nunca se invocan entre si. (Confirmada: `src/pipeline/filter.ts`, `src/pipeline/registry.ts`.)
-
----
-
-## 3.4.2 Decisiones de diseno
-
-### DD-001 — Pipes & Filters con contexto de reserva como pipe en memoria
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-01, RF-02, RF-03, RF-04, RF-05.
-- Atributos de calidad: QA-01 (modificabilidad), QA-04 (testabilidad).
-- Restricciones: RT-02 (estilo impuesto), RT-01, RO-03.
-
-**Diseno adoptado y manifestacion en la vista**
-
-`Pipeline` recibe una lista ordenada de objetos `Filter` y los aplica en secuencia sobre un `ReservationContext`. Los "pipes" no son colas ni streams: son el pasaje del mismo objeto de contexto de un filtro al siguiente dentro del mismo proceso y del mismo tick logico. Cada filtro declara un `name` y un metodo `execute`.
-
-**Clasificacion**
-
-- Estilo arquitectonico: Pipes & Filters.
-- Patron: Chain of Responsibility en su variante "todos participan" (no hay corto circuito por consumo del mensaje, sino por marca de aborto).
-- Tactica: separacion de responsabilidades para modificabilidad; interfaz uniforme para reducir el acoplamiento.
-- Tecnologia: TypeScript (interfaces estructurales), Node.js.
-
-**Justificacion**
-
-Las siete reglas de la consigna son independientes entre si y cambian por motivos distintos. Una cadena de filtros con interfaz uniforme permite modificar una regla tocando un archivo, y cambiar el orden o la composicion sin tocar ninguna implementacion. La uniformidad de la interfaz es lo que habilita QA-01: el orquestador no sabe que hace cada filtro.
-
-**Alternativas**
-
-Analisis actual (no hay evidencia de que se hayan evaluado historicamente): un unico servicio `calculateReservation` con las reglas en orden fijo seria mas corto y mas rapido de leer, pero haria imposible RF-08 (habilitar/deshabilitar filtros) sin condicionales dispersos, y obligaria a probar el calculo completo para verificar una regla. Un pipeline con colas o eventos (por ejemplo, streams de Node o un broker) daria concurrencia y desacople temporal, a costa de complejidad, orden no garantizado y dificultad para devolver un resultado sincronico por HTTP, que es lo que exige RF-01.
-
-**Consecuencias**
-
-- Beneficios: cada regla es una unidad reemplazable; el orden es dato, no codigo; pruebas unitarias triviales por filtro.
-- Costos y desventajas: mas archivos y mas indireccion que una funcion monolitica; el lector debe reconstruir mentalmente el calculo total recorriendo ocho filtros.
-- Riesgos: acoplamiento implicito por el orden (un filtro asume que otro ya escribio en el contexto). Mitigado con chequeos defensivos: `PRICING_NOT_INITIALIZED`, `FLIGHT_NOT_RESOLVED`.
-- Trade-offs: se cambia simplicidad de lectura por flexibilidad de composicion.
-
-**Evidencia**
-
-- `src/pipeline/pipeline.ts`, `src/pipeline/filter.ts`, `src/pipeline/registry.ts`.
-- `tests/pipeline/pipeline.test.ts` ("ejecuta los filtros en el orden recibido").
-
-**ADR relacionado**
-
-- [ADR-001 — Adoptar Pipes & Filters en proceso con contexto compartido](../adr/ADR-001-pipes-and-filters.md)
-
----
-
-### DD-002 — Contexto mutable que acumula diagnostico, en lugar de transformacion inmutable
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-06, RF-01.
-- Atributos de calidad: QA-06 (observabilidad), QA-03 (robustez).
-- Restricciones: RT-07.
-
-**Diseno adoptado y manifestacion en la vista**
-
-`ReservationContext` contiene la solicitud original, los datos resueltos (`passenger`, `flight`), el desglose `pricing`, la metadata de moneda, un array `issues` con errores y warnings, y una `trace` por filtro. Los filtros mutan ese objeto mediante funciones auxiliares (`addWarning`, `rejectReservation`) y lo devuelven.
-
-**Clasificacion**
-
-- Estilo: Pipes & Filters (variante de mensaje enriquecido acumulativo).
-- Patron: Context Object; Notification (acumulacion de errores en lugar de excepciones).
-- Tactica: registro de fallos y de actividad para observabilidad.
-- Tecnologia: TypeScript.
-
-**Justificacion**
-
-RF-06 pide un reporte de errores *y* warnings por reserva, y RT-07 exige continuar procesando pese a fallos de integracion. Con excepciones, el primer problema cortaria el flujo y perderiamos los diagnosticos posteriores; con estructuras inmutables, cada filtro tendria que reconstruir y copiar un objeto grande en cada paso sin beneficio funcional visible para el cliente.
-
-**Alternativas**
-
-Analisis actual: (a) filtros puros que devuelven un contexto nuevo (`{...context, pricing}`) — mas seguro frente a mutaciones accidentales y mas facil de razonar en paralelo, a costa de copias y verbosidad; (b) excepciones tipadas por regla — mas idiomatico para "detener el flujo", pero incompatible con acumular varios avisos y con seguir procesando el lote.
-
-**Consecuencias**
-
-- Beneficios: diagnostico completo por reserva; codigo de filtro corto; costo de memoria constante por reserva.
-- Costos y desventajas: la mutacion compartida permite que un filtro pise datos de otro sin que el compilador lo impida.
-- Riesgos: si en el futuro se ejecutaran filtros en paralelo sobre el mismo contexto, habria condiciones de carrera. Mitigacion: el orquestador es estrictamente secuencial por reserva.
-- Trade-offs: se cambia pureza funcional por simplicidad y por un reporte de diagnostico rico.
-
-**Evidencia**
-
-- `src/domain/reservationContext.ts`, `src/services/reservationResult.ts`.
-- `tests/filters/exchangeRate.filters.test.ts` (warnings acumulados sin abortar).
-
-**ADR relacionado**
-
-- [ADR-002 — Contexto mutable acumulativo frente a transformacion inmutable](../adr/ADR-002-contexto-mutable.md)
-
----
-
-### DD-003 — Interfaz uniforme de filtro con dependencias inyectadas y registry por nombre
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-02..RF-05, RF-08.
-- Atributos de calidad: QA-04 (testabilidad), QA-01 (modificabilidad).
-- Restricciones: RO-03 ("cada filtro debe ser independiente y testeable por separado").
-
-**Diseno adoptado y manifestacion en la vista**
-
-Cada filtro se construye con una funcion fabrica `(deps: FilterDependencies) => Filter`. `FilterDependencies` agrupa configuracion, repositorios, proveedor de tasas, logger y reloj (`now`). `FILTER_FACTORIES` mapea `FilterName` a fabrica, y `buildFilters` instancia la lista segun `config.filterOrder`.
-
-**Clasificacion**
-
-- Patron: Factory + Registry; Dependency Injection manual por constructor.
-- Tactica: sustitucion de dependencias para testabilidad; parametrizacion del reloj para eliminar no-determinismo.
-- Tecnologia: TypeScript (union de literales `FilterName` que garantiza en compilacion que el registry este completo).
-
-**Justificacion**
-
-Sin inyeccion, el filtro de vuelo tomaria `new Date()` y el repositorio global, y probar "fecha ya pasada" dependeria del calendario. Con `now` y repositorios inyectados, cada prueba es determinista y no toca la red ni HTTP. El registry tipado convierte "agregar un filtro" en una operacion verificada por el compilador: si falta una entrada, no compila.
-
-**Alternativas**
-
-Analisis actual: un contenedor de inversion de control (por ejemplo, tsyringe o InversifyJS) daria resolucion automatica, pero agrega una dependencia y metaprogramacion por decoradores para un grafo de objetos que hoy es pequeno y plano. Pasar las dependencias como segundo argumento de `execute` evitaria las fabricas, a costa de repetir el argumento en cada llamada y de permitir que cambien entre pasos.
-
-**Consecuencias**
-
-- Beneficios: filtros puros respecto de su entorno; pruebas rapidas y deterministas; reemplazo del proveedor externo por un doble en una linea.
-- Costos y desventajas: hay que construir el objeto de dependencias en cada punto de entrada; `FilterDependencies` tiende a crecer y todos los filtros lo reciben completo aunque usen una parte.
-- Riesgos: una dependencia agregada al objeto obliga a actualizar los ayudantes de prueba.
-- Trade-offs: algo de ceremonia a cambio de aislamiento.
-
-**Evidencia**
-
-- `src/pipeline/filter.ts`, `src/pipeline/registry.ts`, `tests/helpers/testDeps.ts`.
-
-**ADR relacionado**
-
-- [ADR-001 — Adoptar Pipes & Filters en proceso con contexto compartido](../adr/ADR-001-pipes-and-filters.md)
-
----
-
-### DD-004 — Aislamiento de fallos en el orquestador y modelo de estados por reserva
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-01, RF-06.
-- Atributos de calidad: QA-03 (robustez), QA-06 (observabilidad).
-- Restricciones: RT-07; consigna "el pipeline debe ser robusto ante fallos individuales de filtros".
-
-**Diseno adoptado y manifestacion en la vista**
-
-`Pipeline.process` envuelve cada `filter.execute` en `try/catch`. Una excepcion se traduce en un `issue` con codigo `FILTER_EXCEPTION`, estado `failed` y una entrada de traza con `status: 'failed'`; los filtros siguientes se saltan para esa reserva. `processBatch` itera reserva por reserva, de modo que un fallo individual no afecta a las demas, y devuelve un `summary` con el recuento por estado. Los estados finales son `processed`, `processed_with_warnings`, `rejected` (error de negocio) y `failed` (error tecnico).
-
-**Clasificacion**
-
-- Patron: Error boundary por etapa; Circuit-breaker *no* aplicado (ver Riesgos).
-- Tactica: contencion de fallos (`fault containment`), degradacion elegante, deteccion y registro de excepciones.
-- Tecnologia: `try/catch` de JavaScript, `performance.now()` para medicion.
-
-**Justificacion**
-
-La consigna distingue explicitamente "datos corruptos en mitad del pipeline" y "filtro que lanza excepcion" como casos a soportar. Separar `rejected` de `failed` importa porque son problemas de naturaleza distinta: el primero es una respuesta valida del negocio y el segundo es un defecto del sistema; mezclarlos haria invisible la tasa de errores tecnicos.
-
-**Alternativas**
-
-Analisis actual: propagar la excepcion y devolver 500 para todo el lote seria mas simple, pero contradice la consigna y castiga a las reservas correctas. Reintentar el filtro que falla no tiene sentido para errores deterministas de datos, y el unico filtro con fallos transitorios (el de tipo de cambio) ya tiene su propia politica de reintentos.
-
-**Consecuencias**
-
-- Beneficios: el proceso nunca cae por un filtro defectuoso; el cliente recibe resultados parciales utiles y un motivo por reserva.
-- Costos y desventajas: un defecto sistematico (por ejemplo, un filtro roto para todas las reservas) se reporta como 200 con N reservas `failed`, no como error del servicio; requiere que el consumidor mire `summary.failed`.
-- Riesgos: si el fallo es un tercero degradado, procesar todo el lote igual multiplica la latencia. Mitigacion actual: timeout acotado y cache; un circuit breaker queda como **Propuesta**.
-- Trade-offs: se prioriza completitud del lote sobre falla rapida.
-
-**Evidencia**
-
-- `src/pipeline/pipeline.ts`.
-- `tests/pipeline/pipeline.test.ts` ("aisla la excepcion de un filtro", "procesa el lote completo aunque una reserva falle").
-
-**ADR relacionado**
-
-- [ADR-003 — Aislamiento de fallos por filtro y politica de continuidad](../adr/ADR-003-aislamiento-de-fallos.md)
-
----
-
-### DD-005 — Distincion entre error de negocio (rechazo) y warning no bloqueante
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-02, RF-03, RF-05, RF-06.
-- Atributos de calidad: QA-02, QA-03.
-- Restricciones: RT-07.
-
-**Diseno adoptado y manifestacion en la vista**
-
-`rejectReservation` marca `aborted = true` y estado `rejected`: la usan los filtros de validacion y los chequeos de precondiciones de los filtros de precio. `addWarning` no altera el flujo: la usan los fallos de integracion, la falta de telefono y la ausencia de metadata de moneda. El orquestador respeta `aborted` salteando los filtros posteriores, salvo los marcados `runOnAborted`.
-
-**Clasificacion**
-
-- Patron: Notification; Guard clause.
-- Tactica: degradacion elegante para disponibilidad.
-- Tecnologia: TypeScript (`IssueSeverity`).
-
-**Justificacion**
-
-La consigna es explicita: pasajero inexistente o vuelo sin asientos deben rechazar la reserva, mientras que un fallo de la API de cambio debe continuar "con warnings y precios en USD". Sin esta distincion en el modelo, cualquier tratamiento uniforme violaria una de las dos reglas.
-
-**Alternativas**
-
-Analisis actual: una sola lista de errores con un flag `blocking` es equivalente en potencia expresiva, pero obliga a filtrar en cada consumidor; devolver HTTP 4xx por reserva rechazada es imposible en un lote con resultados mixtos.
-
-**Consecuencias**
-
-- Beneficios: contrato claro para el cliente (`errors` vs `warnings`); el codigo de cada filtro expresa la severidad en el punto de deteccion.
-- Costos y desventajas: la clasificacion es una decision de diseno por caso y puede volverse inconsistente entre filtros sin una guia escrita.
-- Riesgos: degradar a warning algo que el negocio considera bloqueante produciria reservas con precio incorrecto en silencio. Mitigacion: los warnings cambian el estado a `processed_with_warnings`, visible en el resumen.
-- Trade-offs: mas matices en el contrato de salida a cambio de fidelidad al requerimiento.
-
-**Evidencia**
-
-- `src/domain/reservationContext.ts`, `src/pipeline/filters/validatePassenger.filter.ts`, `src/pipeline/filters/exchangeRateEnrichment.filter.ts`.
-- `tests/api/reservations.routes.test.ts` ("continua en USD con warning cuando la API de tipo de cambio falla").
-
-**ADR relacionado**
-
-- [ADR-003 — Aislamiento de fallos por filtro y politica de continuidad](../adr/ADR-003-aislamiento-de-fallos.md)
-
----
-
-### DD-006 — Puerto `ExchangeRateProvider` con adaptador HTTP concreto
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-05.
-- Atributos de calidad: QA-04 (testabilidad), QA-02 (disponibilidad), QA-01 (modificabilidad).
-- Restricciones: RT-04 (proveedor gratuito sin API key), RO-03.
-
-**Diseno adoptado y manifestacion en la vista**
-
-El filtro de enriquecimiento depende de la interfaz `ExchangeRateProvider` (`getRate`, `invalidateCache`). `ExchangeRateApiClient` la implementa sobre `fetch` nativo y recibe `settings`, `cache`, `logger`, `fetchFn` y `sleep` por constructor. La aplicacion puede inyectar otro proveedor completo (`exchangeRateProvider`) o solo otro transporte (`fetchFn`).
-
-**Clasificacion**
-
-- Patron: Adapter / Ports & Adapters (hexagonal) aplicado localmente a una integracion.
-- Tactica: intermediario para reducir acoplamiento; sustitucion de dependencias para pruebas.
-- Tecnologia: `fetch` y `AbortController` nativos de Node 20+ (sin axios ni node-fetch).
-
-**Justificacion**
-
-La consigna ofrece cuatro proveedores posibles y aclara que la API es externa y puede fallar; el punto de variacion es evidente. Con el puerto, cambiar de ExchangeRate-API a Fixer implica una clase nueva y ninguna modificacion del pipeline. Ademas, las 58 pruebas corren sin red porque el doble se inyecta en la frontera correcta.
-
-**Alternativas**
-
-Analisis actual: llamar `fetch` directamente en el filtro seria mas corto pero volveria al filtro no testeable sin interceptar HTTP global; usar una libreria cliente (axios) agregaria dependencia y no aporta nada que `fetch` + `AbortController` no cubran para un GET.
-
-**Consecuencias**
-
-- Beneficios: integracion sustituible; pruebas sin red; el pipeline ignora los detalles de HTTP.
-- Costos y desventajas: una interfaz extra para un unico implementador real.
-- Riesgos: la interfaz expone `invalidateCache`, lo que filtra un detalle de implementacion (que hay cache) al puerto. Aceptado porque RT-05 exige invalidacion manual como requerimiento, no como detalle.
-- Trade-offs: indireccion a cambio de aislamiento del cambio y de la prueba.
-
-**Evidencia**
-
-- `src/services/exchangeRate/exchangeRateProvider.ts`, `src/services/exchangeRate/exchangeRateApiClient.ts`.
-- `tests/helpers/testDeps.ts` (dobles `stubRateProvider` y `failingRateProvider`).
-
-**ADR relacionado**
-
-- [ADR-004 — Integracion resiliente con la API de tipo de cambio](../adr/ADR-004-integracion-tipo-de-cambio.md)
-
----
-
-### DD-007 — Timeout, reintentos, cache con TTL y tasas de respaldo en el cliente de tasas
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-05.
-- Atributos de calidad: QA-02 (disponibilidad), QA-05 (rendimiento).
-- Restricciones: RT-04, RT-05, RT-07.
-
-**Diseno adoptado y manifestacion en la vista**
-
-`ExchangeRateApiClient.getRate` resuelve en este orden: moneda base igual a destino (`identity`, sin red) → cache vigente (`cache`) → llamada HTTP con `AbortController` y timeout de 5 s, hasta 3 intentos con backoff lineal (`api`) → tasa de respaldo configurada (`fallback`) → excepcion `ExchangeRateUnavailableError` si no hay respaldo. La respuesta de la API se cachea completa por moneda base, de modo que una llamada cubre todas las monedas destino durante la hora siguiente. El origen de la tasa viaja al cliente en `currency.rateSource`.
-
-**Clasificacion**
-
-- Patron: Retry, Cache-aside, Fallback / graceful degradation.
-- Tactica: timeout para deteccion de fallos; reintento para fallos transitorios; cache para reducir carga y latencia; valor por defecto para disponibilidad.
-- Tecnologia: `AbortController`, `Map` en memoria.
-
-**Justificacion**
-
-RT-05 fija los parametros. La cuota mensual del proveedor (RT-04) hace que la cache no sea solo una optimizacion, sino una condicion de viabilidad: un lote de 50 reservas al mismo destino consume una sola llamada. Exponer `rateSource` permite al consumidor saber si el precio se calculo con una cotizacion real o con un valor de respaldo, que es informacion de negocio, no de infraestructura.
-
-**Alternativas**
-
-Analisis actual: sin cache, el sistema agotaria la cuota y multiplicaria la latencia del lote; sin fallback, un proveedor caido dejaria reservas sin convertir y violaria RT-07; con reintentos sin timeout, una conexion colgada bloquearia el lote indefinidamente. Un circuit breaker seria el siguiente paso natural si se observara degradacion sostenida: queda **Propuesta**.
-
-**Consecuencias**
-
-- Beneficios: el procesamiento nunca depende de la disponibilidad del tercero; latencia acotada; consumo de cuota minimo.
-- Costos y desventajas: las tasas de respaldo estan cableadas en la configuracion y envejecen, por lo que un fallback prolongado produce precios convertidos inexactos; la cache puede servir tasas de hasta una hora de antiguedad.
-- Riesgos: en el peor caso (proveedor colgado), el costo por moneda base es `timeout x intentos` ≈ 15 s. Medicion real observada en ejecucion manual con host inalcanzable: ~1 s con `timeoutMs: 400` y 2 intentos. Presupuesto aceptable de latencia por lote: `Pendiente de validacion`.
-- Trade-offs: se acepta precision de la cotizacion a cambio de disponibilidad y previsibilidad.
-
-**Evidencia**
-
-- `src/services/exchangeRate/exchangeRateApiClient.ts`, `src/services/exchangeRate/ratesCache.ts`, `DEFAULT_PIPELINE_CONFIG.exchangeRate`.
-- `tests/services/exchangeRateApiClient.test.ts` (10 casos: api, cache, TTL vencido, invalidacion, reintentos, fallback, HTTP 503, timeout abortado, sin respaldo, identidad).
-- Verificacion manual contra el proveedor real: primera llamada `rateSource: "api"` en ~1040 ms; segunda `rateSource: "cache"` en ~0.4 ms.
-
-**ADR relacionado**
-
-- [ADR-004 — Integracion resiliente con la API de tipo de cambio](../adr/ADR-004-integracion-tipo-de-cambio.md)
-
----
-
-### DD-008 — Reglas de negocio y topologia del pipeline como configuracion mutable en memoria
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-04, RF-08.
-- Atributos de calidad: QA-07 (configurabilidad), QA-01 (modificabilidad).
-- Restricciones: RO-02 (sin infraestructura), consigna "es posible configurar que filtros estan habilitados/deshabilitados".
-
-**Diseno adoptado y manifestacion en la vista**
-
-`PipelineConfig` contiene `filterOrder`, `enabledFilters`, multiplicadores de clase, porcentajes de lealtad y de tipo de pasajero, impuestos y los parametros de la integracion. `PipelineConfigStore` guarda una copia profunda, devuelve clones en `get()` y aplica parches parciales en `update()`. `POST /reservations/process` acepta un `config` que se aplica **solo a ese request**, construyendo un store efimero sobre la configuracion global.
-
-**Clasificacion**
-
-- Patron: Configuration object / External configuration; Copy-on-read para evitar aliasing.
-- Tactica: parametrizacion en tiempo de ejecucion (binding tardio) para modificabilidad.
-- Tecnologia: objeto en memoria, validado con zod en la frontera HTTP.
-
-**Justificacion**
-
-Los porcentajes de la consigna son exactamente el tipo de regla que cambia sin aviso. Tenerlos como datos permite que un operador ajuste un descuento con un `PUT`, y permite que las pruebas verifiquen que los filtros leen la configuracion y no constantes embebidas. Los overrides por request, ademas, hacen reproducibles los escenarios de error (por ejemplo, apuntar la integracion a un host inalcanzable) sin ensuciar el estado global.
-
-**Alternativas**
-
-Analisis actual: variables de entorno o un archivo JSON serian suficientes para parametrizar, pero exigirian reinicio y no cubren RF-08; una base de datos de configuracion daria persistencia y auditoria, fuera del alcance (RO-02).
-
-**Consecuencias**
-
-- Beneficios: cambio de reglas sin redeploy; escenarios de prueba reproducibles; los filtros quedan libres de constantes.
-- Costos y desventajas: la configuracion se pierde al reiniciar y no se comparte entre instancias; no hay historial de cambios.
-- Riesgos: **sin autenticacion, cualquiera con acceso a la red puede alterar precios** (QA-08, Propuesta). Un `filterOrder` mal armado (por ejemplo, sin `basePrice`) degrada los resultados; mitigado porque los filtros posteriores rechazan con `PRICING_NOT_INITIALIZED` en lugar de calcular mal.
-- Trade-offs: flexibilidad operativa a cambio de superficie de riesgo y de estado no durable.
-
-**Evidencia**
-
-- `src/config/pipelineConfig.ts`, `src/api/pipeline.routes.ts`.
-- `tests/api/pipeline.routes.test.ts` (parche parcial, reordenamiento, rechazo de config invalida, reset); `tests/filters/pricing.filters.test.ts` ("usa los porcentajes de la configuracion, no constantes embebidas").
-
-**ADR relacionado**
-
-- [ADR-005 — Configuracion del pipeline mutable en memoria](../adr/ADR-005-configuracion-mutable.md)
-
----
-
-### DD-009 — Validacion del contrato en la frontera HTTP con esquemas estrictos
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-01, RF-08.
-- Atributos de calidad: QA-03 (robustez), QA-06 (diagnostico util).
-- Restricciones: consigna, caso de prueba "reserva con datos malformados".
-
-**Diseno adoptado y manifestacion en la vista**
-
-`src/api/schemas.ts` define esquemas zod `.strict()` para el cuerpo de `POST /reservations/process` y para el parche de configuracion. Los errores se traducen a `400` con `code` (`INVALID_REQUEST` / `INVALID_CONFIG`) y un detalle `path` + `message` por campo. El JSON malformado se captura en el manejador de errores como `MALFORMED_JSON`. El pipeline, por lo tanto, nunca recibe datos de forma desconocida desde HTTP.
-
-**Clasificacion**
-
-- Patron: Schema validation en la frontera; Data Transfer Object.
-- Tactica: validacion de entrada para prevenir fallos; frontera de errores.
-- Tecnologia: zod 4 y `express.json()`.
-
-**Justificacion**
-
-Separar "payload invalido" (400, culpa del cliente) de "reserva rechazada por el negocio" (200 con `errors`) es necesario para que el cliente sepa si debe corregir el request o informar al usuario. Validar en un solo lugar evita chequeos defensivos repetidos en ocho filtros y hace que los tipos del dominio sean confiables aguas abajo.
-
-**Alternativas**
-
-Analisis actual: validacion manual con `typeof` evitaria la dependencia, a costa de mensajes pobres y codigo repetitivo; validar dentro de cada filtro duplicaria reglas y mezclaria responsabilidades; usar `class-validator` requeriria decoradores y clases en lugar de tipos estructurales.
-
-**Consecuencias**
-
-- Beneficios: errores accionables por campo; tipos de dominio garantizados; una sola dependencia en runtime ademas de Express.
-- Costos y desventajas: el esquema duplica la forma de los tipos del dominio y hay que mantener ambos sincronizados.
-- Riesgos: `.strict()` rechaza campos desconocidos, lo que rompe clientes que envien extras. Aceptado deliberadamente: detecta typos de configuracion temprano.
-- Trade-offs: rigidez del contrato a cambio de deteccion temprana.
-
-**Evidencia**
-
-- `src/api/schemas.ts`, `src/api/errorHandler.ts`.
-- `tests/api/reservations.routes.test.ts` ("devuelve 400 con detalle cuando el payload esta malformado", "devuelve 400 cuando el cuerpo no es JSON valido").
-
-**ADR relacionado**
-
-- [ADR-003 — Aislamiento de fallos por filtro y politica de continuidad](../adr/ADR-003-aislamiento-de-fallos.md)
-
----
-
-### DD-010 — Datos mock en memoria detras de repositorios indexados
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-02, RF-03.
-- Atributos de calidad: QA-04 (testabilidad).
-- Restricciones: RT-03, RO-04.
-
-**Diseno adoptado y manifestacion en la vista**
-
-`src/data/mockPassengers.ts` y `src/data/mockFlights.ts` declaran los datos; `passengerRepository` y `flightRepository` exponen `findById` / `findByCode` sobre un `Map` construido al cargar el modulo. Las fechas de salida se calculan relativas al arranque (`daysFromNow`), y hay un vuelo con fecha pasada, uno sin asientos y uno con asientos escasos.
-
-**Clasificacion**
-
-- Patron: Repository.
-- Tactica: indireccion para sustituir la fuente de datos; datos de prueba disenados por escenario.
-- Tecnologia: modulos TypeScript, `Map`.
-
-**Justificacion**
-
-La consigna pide datos mock en archivos separados, cargados al inicio y faciles de modificar. Interponer un repositorio permite que los filtros no sepan si los datos vienen de un array o de una base, que es la unica forma de que la migracion futura a persistencia real no toque los filtros. Calcular las fechas de forma relativa evita que las pruebas de "fecha futura" caduquen con el paso del tiempo, que es un defecto clasico de los datos de prueba fijos.
-
-**Alternativas**
-
-Analisis actual: importar los arrays directamente en cada filtro seria mas corto y acoplaria los filtros al formato de los datos; usar SQLite en memoria daria semantica de base real (consultas, indices) a costa de asincronia y de una dependencia que el ejercicio no pide.
-
-**Consecuencias**
-
-- Beneficios: busquedas O(1); filtros independientes de la fuente; escenarios de prueba cubiertos por construccion.
-- Costos y desventajas: la interfaz es sincronica, por lo que migrar a una base real obligaria a volverla asincronica y a propagar `await` (los filtros ya son `async`, lo que reduce el impacto).
-- Riesgos: el sistema no decrementa `availableSeats`, por lo que no hay control de concurrencia ni reserva efectiva. Explicitamente fuera de alcance.
-- Trade-offs: simplicidad hoy contra un cambio de interfaz manana.
-
-**Evidencia**
-
-- `src/data/mockPassengers.ts`, `src/data/mockFlights.ts`, `src/repositories/`.
-- `tests/filters/validateFlight.filter.test.ts` (casos de asientos, ruta y fecha).
-
-**ADR relacionado**
-
-- [ADR-006 — Datos mock y estado de procesamiento en memoria](../adr/ADR-006-estado-en-memoria.md)
-
----
-
-### DD-011 — Separacion del filtro de tipo de cambio en enriquecimiento y conversion
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-04, RF-05.
-- Atributos de calidad: QA-02, QA-05.
-- Restricciones: RT-06 (precios base en USD), orden de filtros de la consigna.
-
-**Diseno adoptado y manifestacion en la vista**
-
-La consigna ubica el filtro de tipo de cambio en la posicion 3, antes del calculo del precio base (posicion 4). Convertir un precio que todavia no fue calculado es imposible. La responsabilidad se dividio en dos filtros: `exchangeRateEnrichment` conserva la posicion 3 y realiza la unica llamada externa (deteccion de moneda de destino, obtencion y cacheo de la tasa, metadata en el contexto); `currencyConversion` se ejecuta al cierre y aplica esa tasa sobre `totalUsd`, sin volver a llamar a la API.
-
-**Clasificacion**
-
-- Patron: Content Enricher seguido de Translator (vocabulario de patrones de integracion).
-- Tactica: separacion de responsabilidades; mantener el punto de I/O en una sola etapa.
-- Tecnologia: TypeScript.
-
-**Justificacion**
-
-Se preservan dos propiedades a la vez: la llamada externa ocurre donde la consigna la ubica (util si el orden expresa una intencion de negocio, por ejemplo fallar temprano si el tercero es indispensable), y el resultado es aritmeticamente correcto porque la conversion se aplica a un total existente. Ademas, deja un solo lugar con I/O remoto, lo que concentra las tacticas de disponibilidad.
-
-**Alternativas**
-
-Analisis actual: (a) mover el filtro unico al final del pipeline — mas simple, un filtro menos, pero se aparta del orden enunciado; (b) mantener el filtro en la posicion 3 convirtiendo el `basePriceUsd` del vuelo — coherente con el enunciado, pero dejaria la conversion desactualizada respecto del total final, que es el numero que el cliente paga.
-
-**Consecuencias**
-
-- Beneficios: correccion aritmetica sin contradecir el orden de la consigna; conversion desacoplada de la integracion; `currencyConversion` se puede deshabilitar sin perder la metadata de la tasa.
-- Costos y desventajas: ocho filtros en lugar de siete; hay un acoplamiento por datos entre ambos (`context.currency`).
-- Riesgos: si se deshabilita solo `exchangeRateEnrichment`, la conversion no tiene tasa. Mitigado: `currencyConversion` emite el warning `CURRENCY_METADATA_MISSING` y mantiene el total en USD.
-- Trade-offs: un filtro adicional a cambio de correccion y de fidelidad al orden pedido.
-
-**Evidencia**
-
-- `src/pipeline/filters/exchangeRateEnrichment.filter.ts`, `src/pipeline/filters/currencyConversion.filter.ts`, `DEFAULT_PIPELINE_CONFIG.filterOrder`.
-- `tests/filters/exchangeRate.filters.test.ts` ("mantiene el total en USD con un warning si falta la metadata de moneda").
-
-**ADR relacionado**
-
-- [ADR-007 — Orden del pipeline y separacion del filtro de tipo de cambio](../adr/ADR-007-orden-pipeline-tipo-de-cambio.md)
-
----
-
-### DD-012 — Traza de ejecucion por filtro y logging estructurado
-
-**Estado de evidencia:** Confirmada
-
-**Necesidad**
-
-- RF relacionados: RF-06, RF-07.
-- Atributos de calidad: QA-06 (observabilidad).
-- Restricciones: consigna ("tiempo total de procesamiento", "logging de errores de integracion").
-
-**Diseno adoptado y manifestacion en la vista**
-
-Cada paso agrega a `context.trace` una entrada con `filter`, `status` (`executed` | `skipped` | `disabled` | `failed`), `durationMs` y un `detail` opcional. El lote reporta `processingTimeMs`. El logger emite JSON por linea con nivel configurable (`LOG_LEVEL`), y se silencia en pruebas. `ProcessingStore` retiene el ultimo resultado por reserva para `GET /reservations/:id/status`.
-
-**Clasificacion**
-
-- Patron: Execution log / Audit trail.
-- Tactica: registro de actividad y de fallos para observabilidad.
-- Tecnologia: `performance.now()`, `console` con JSON estructurado.
-
-**Justificacion**
-
-En un pipeline configurable, "el precio salio distinto" solo se puede explicar sabiendo que filtros corrieron. La traza convierte esa pregunta en un dato de la respuesta, y `durationMs` por filtro identifica de inmediato cual etapa domina la latencia (en la verificacion manual, `exchangeRateEnrichment` explico 1040 ms de 1042 ms totales en la primera llamada).
-
-**Alternativas**
-
-Analisis actual: un logger de libreria (pino, winston) daria transporte, rotacion y niveles maduros; se omitio para no agregar dependencias en un ejercicio sin infraestructura de logs. OpenTelemetry seria el camino correcto para un entorno real y queda **Propuesta**.
-
-**Consecuencias**
-
-- Beneficios: diagnostico autoexplicativo por reserva; medicion por etapa sin herramientas externas.
-- Costos y desventajas: la traza agranda la respuesta proporcionalmente a la cantidad de filtros; `console` no es adecuado para produccion.
-- Riesgos: si un filtro futuro incluyera datos personales en `detail`, quedarian expuestos en la respuesta y en los logs.
-- Trade-offs: verbosidad de la respuesta a cambio de trazabilidad.
-
-**Evidencia**
-
-- `src/pipeline/pipeline.ts`, `src/support/logger.ts`, `src/store/processingStore.ts`.
-- `tests/api/reservations.routes.test.ts` (la traza tiene 8 entradas; filtro deshabilitado marcado como `disabled`).
-
-**ADR relacionado**
-
-- [ADR-006 — Datos mock y estado de procesamiento en memoria](../adr/ADR-006-estado-en-memoria.md)
-
----
-
-## Matriz de trazabilidad
-
-| RF | Atributo o restriccion | Decision | Patron o tactica | ADR | Evidencia |
-|---|---|---|---|---|---|
-| RF-01 | QA-01, RT-02 | DD-001 | Pipes & Filters / interfaz uniforme | ADR-001 | `src/pipeline/pipeline.ts`; `tests/pipeline/pipeline.test.ts` |
-| RF-01, RF-06 | QA-03 | DD-004 | Error boundary / contencion de fallos | ADR-003 | `src/pipeline/pipeline.ts`; prueba "aisla la excepcion de un filtro" |
-| RF-06 | QA-06 | DD-002 | Context object / Notification | ADR-002 | `src/domain/reservationContext.ts` |
-| RF-06, RF-07 | QA-06 | DD-012 | Execution log | ADR-006 | `FilterTrace` en respuestas; `src/support/logger.ts` |
-| RF-02 | RT-08, QA-04 | DD-003, DD-005 | Guard clause / DI | ADR-001, ADR-003 | `validatePassenger.filter.ts`; `tests/filters/validatePassenger.filter.test.ts` |
-| RF-03 | RT-03, QA-04 | DD-003, DD-010 | Repository / DI del reloj | ADR-006 | `validateFlight.filter.ts`; `tests/filters/validateFlight.filter.test.ts` |
-| RF-04 | QA-01, QA-07 | DD-008 | Configuration object / binding tardio | ADR-005 | `pipelineConfig.ts`; `tests/filters/pricing.filters.test.ts` |
-| RF-05 | QA-02, RT-04, RT-05, RT-07 | DD-006, DD-007 | Adapter, Retry, Cache-aside, Fallback | ADR-004 | `exchangeRateApiClient.ts`; `tests/services/exchangeRateApiClient.test.ts` |
-| RF-04, RF-05 | RT-06 | DD-011 | Content Enricher + Translator | ADR-007 | `exchangeRateEnrichment.filter.ts`, `currencyConversion.filter.ts` |
-| RF-07 | RO-02 | DD-010, DD-012 | Repository en memoria | ADR-006 | `src/store/processingStore.ts`; pruebas de `GET /:id/status` |
-| RF-08 | QA-07, QA-08 | DD-008, DD-009 | External configuration + Schema validation | ADR-005 | `src/api/pipeline.routes.ts`, `src/api/schemas.ts` |
-| RF-01, RF-08 | QA-03 | DD-009 | Validacion en la frontera | ADR-003 | `src/api/schemas.ts`; pruebas de 400 |
-
-No hay filas huerfanas: cada decision referencia al menos un RF, un atributo o restriccion, un ADR y evidencia verificable del repositorio.
-
----
-
-## Preguntas y datos pendientes
-
-| Dato faltante | Responsable | Efecto sobre el analisis |
-|---|---|---|
-| Presupuesto de latencia por lote y tamano maximo esperado de lote | Product owner del curso | Sin el, QA-05 no tiene medida verificable; hoy el limite es un tope arbitrario de 200 reservas por request (`Pendiente de validacion`) |
-| Volumen de reservas por hora y por destino | Product owner | Determina si la cuota mensual del proveedor gratuito alcanza y si hace falta un circuit breaker |
-| Politica de antiguedad aceptable de una cotizacion | Area comercial | El TTL de 1 hora y las tasas de respaldo se tomaron de la consigna, sin validacion de negocio |
-| Quien puede modificar la configuracion del pipeline | Area de seguridad / catedra | QA-08 queda como Propuesta; hoy el endpoint es abierto |
-| Se debe reservar efectivamente el asiento (decrementar `availableSeats`) | Product owner | Definiria la necesidad de transacciones y control de concurrencia, hoy fuera de alcance |
-| Origen historico de los porcentajes de descuento e impuestos | Catedra | Se implementaron tal como los enuncia la consigna; no hay evidencia de su justificacion de negocio |
+### Anexo D: Glosario
+
+- **AC (Atributo de Calidad):** Requerimiento no funcional que define una propiedad cuantificable de calidad del sistema (rendimiento, disponibilidad, modificabilidad, testeabilidad).
+- **ADR (Architectural Decision Record):** Documento formal breve que captura una decisión arquitectónica significativa, su justificación, alternativas rechazadas y consecuencias.
+- **Context-guard:** Componente interceptor que inspecciona el contexto tras cada filtro para verificar que no contenga valores numéricos corruptos (`NaN`, infinitos o negativos).
+- **CorrelationId:** Identificador único propagado a lo largo del procesamiento de una petición HTTP para correlacionar los registros de telemetría emitidos por los filtros.
+- **Filtro (Filter):** Componente atómico e independiente que implementa una transformación, validación o cálculo sobre el contexto de la reserva.
+- **Pipes & Filters:** Patrón arquitectónico que estructura el procesamiento de un flujo de datos en una serie de etapas de transformación (filtros) comunicadas por canales (tuberías).
+- **RF (Requerimiento Funcional):** Enunciado de un servicio, comportamiento o caso de uso provisto por el software.
+- **RS (Restricción):** Decisión impuesta de diseño, tecnológica, normativa u organizacional que limita el espacio de soluciones del arquitecto.
+- **Single-flight:** Táctica de concurrencia que consolida múltiples solicitudes idénticas en vuelo en una única petición de red saliente, compartiendo el resultado entre todos los solicitantes.
+- **Sink (Sumidero):** Etapa terminal de la tubería encargada de serializar y proyectar los resultados calculados hacia el formato de salida requerido.
+- **Snapshot:** Copia inmutable del estado de configuración del sistema capturada al inicio del procesamiento de un lote para aislarlo de modificaciones concurrentes.
+- **Source (Fuente):** Etapa inicial encargada de recibir las cargas externas, validarlas e instanciar los contextos que ingresarán a las tuberías.
+- **Stale-cache:** Tasa de cambio almacenada en caché cuya ventana de tiempo de vida (TTL) ha expirado, pero que se utiliza temporalmente como mecanismo de degradación ante fallos del proveedor.

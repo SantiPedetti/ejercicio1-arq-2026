@@ -1,0 +1,30 @@
+flowchart LR
+    subgraph Clients["Actores del Sistema"]
+        Client["Cliente HTTP (Reservas)\n[Actor Externo]"]
+        Operator["Operador / Analista\n[Actor Administrativo]"]
+    end
+
+    subgraph SystemBoundary["Límite del Sistema: Flight Reservation Backend"]
+        System["Sistema de Procesamiento\nde Reservas de Vuelos\n[Express + TypeScript + Node.js 22]"]
+    end
+
+    subgraph ExternalServices["Servicios y Destinos Externos"]
+        ExchangeAPI["ExchangeRate-API\n[Servicio REST Externo]"]
+        StdOut["Consola del Sistema (stdout)\n[Destino de Logs Pino JSON]"]
+    end
+
+    Client -->|"Conector HTTP REST\n[Local/Red, Síncrono, JSON]\nPOST /reservations/process\nGET /reservations/:id/status"| System
+    Operator -->|"Conector HTTP REST\n[Local/Red, Síncrono, JSON]\nGET /pipeline/config\nPUT /pipeline/config\nPOST /pipeline/cache/invalidate"| System
+    System -->|"Conector HTTPS REST Remoto\n[Remoto, Síncrono con Timeout 5s, JSON]\nGET /v4/latest/{base}"| ExchangeAPI
+    System -->|"Conector IPC / Stream Local\n[Local, Asíncrono no bloqueante]\nStdout Pino Structured Logs"| StdOut
+
+    %% Leyenda
+    classDef boundary fill:#f8f9fa,stroke:#343a40,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef actor fill:#e7f5ff,stroke:#1971c2,stroke-width:2px;
+    classDef system fill:#e6fcf5,stroke:#0ca678,stroke-width:2px;
+    classDef external fill:#fff3bf,stroke:#f08c00,stroke-width:2px;
+
+    class SystemBoundary boundary;
+    class Client,Operator actor;
+    class System system;
+    class ExchangeAPI,StdOut external;

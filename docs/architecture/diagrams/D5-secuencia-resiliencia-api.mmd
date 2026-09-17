@@ -1,0 +1,41 @@
+sequenceDiagram
+    autonumber
+    participant F3 as Filtro 3 (exchangeRateEnrichment)
+    participant Cache as RatesCache
+    participant Client as ExchangeRateApiClient
+    participant API as ExchangeRate-API (Remoto)
+
+    F3->>Client: getRates("USD", { timeout: 5000, maxAttempts: 3 })
+    Client->>Cache: get("USD")
+    alt Tasa en caché vigente (hit)
+        Cache-->>Client: { rates, source: "cache" }
+        Client-->>F3: RatesResult ("cache")
+    else Caché vencida o vacía (miss)
+        Client->>Client: Comprobar single-flight
+        alt Petición idéntica en vuelo
+            Client->>Client: Reutilizar promesa en curso
+        else Iniciar nueva petición
+            loop Intento 1..3 (con backoff 200/400ms + jitter)
+                Client->>API: GET /v4/latest/USD (timeout 5s)
+                alt Respuesta HTTP 200 válida
+                    API-->>Client: 200 OK { base: "USD", rates: {...} }
+                    Client->>Cache: set("USD", rates)
+                    Client-->>F3: RatesResult ("api")
+                else Timeout (5s) o Error 5xx/429
+                    API-->>Client: Fallo transitorio / sin respuesta
+                    Client->>Client: Esperar backoff si quedan intentos
+                end
+            end
+            alt Agotados los 3 intentos sin éxito
+                Client->>Cache: getStale("USD")
+                alt Existe tasa vencida en caché
+                    Cache-->>Client: Tasa vencida
+                    Client-->>F3: RatesResult ("stale-cache")
+                    F3->>F3: ctx.exchangeRate = rate; addWarning(STALE_RATE)
+                else Sin caché previa
+                    Client-->>F3: Lanza ExchangeRateUnavailableError
+                    F3->>F3: addWarning(EXCHANGE_RATE_UNAVAILABLE); ctx.conversion = null
+                end
+            end
+        end
+    end

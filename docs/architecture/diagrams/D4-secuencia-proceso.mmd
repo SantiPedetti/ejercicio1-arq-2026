@@ -1,0 +1,47 @@
+sequenceDiagram
+    autonumber
+    actor Client as Cliente HTTP
+    participant Route as ReservationsRouter
+    participant Service as ProcessingService (Source)
+    participant Pipe as Pipeline Runner
+    participant Filters as Filtros 1 a 8
+    participant Guard as ContextGuard
+    participant Sink as Mapper (Sink)
+    participant Store as ProcessingStore
+
+    Client->>Route: POST /reservations/process { reservations, config? }
+    Route->>Route: Validar sobre global (Zod)
+    Route->>Service: processBatch(items, configOverrides, correlationId)
+    Service->>Service: Tomar snapshot inmutable de configuración
+    
+    par Para cada reserva del lote (Promise.all)
+        Service->>Store: saveStatus(id, PROCESSING)
+        Service->>Service: Validar ítem con singleReservationSchema
+        alt Reserva malformada
+            Service->>Sink: buildInvalidResult(id, INVALID_RESERVATION)
+            Service->>Store: saveResult(id, REJECTED)
+        else Reserva con esquema válido
+            Service->>Service: Inicializar ReservationContext (Source)
+            Service->>Pipe: process(context, correlationId)
+            loop Para cada uno de los 8 filtros
+                alt Filtro habilitado y contexto no abortado
+                    Pipe->>Filters: execute(ctx)
+                    Filters-->>Pipe: nuevo ctx
+                    Pipe->>Guard: validateContextInvariants(ctx)
+                    alt Guard detecta NaN o negativo
+                        Guard-->>Pipe: Invariante violada
+                        Pipe->>Pipe: Marcar FAILED (DATA_CORRUPTED)
+                    end
+                else Filtro deshabilitado o abortado
+                    Pipe->>Pipe: Registrar SKIPPED o NOT_RUN en trace
+                end
+            end
+            Pipe-->>Service: context finalizado
+            Service->>Sink: toReservationResult(ctx)
+            Sink-->>Service: ReservationResult (redondeado)
+            Service->>Store: saveResult(id, status)
+        end
+    end
+
+    Service-->>Route: ProcessBatchResponse { summary, results, processingTimeMs }
+    Route-->>Client: HTTP 200 JSON

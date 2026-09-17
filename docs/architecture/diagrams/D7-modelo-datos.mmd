@@ -1,0 +1,100 @@
+classDiagram
+    class ReservationInput {
+        +string id
+        +string passengerId
+        +string flightCode
+        +string origin
+        +string destination
+        +string departureDate
+        +SeatClass seatClass
+        +PassengerType passengerType
+    }
+
+    class Passenger {
+        +string id
+        +string name
+        +string email
+        +string birthDate
+        +string country
+        +LoyaltyTier loyaltyTier
+        +boolean isActive
+    }
+
+    class Flight {
+        +string code
+        +string flightCode
+        +string origin
+        +string destination
+        +string originCountry
+        +string destinationCountry
+        +string departureAt
+        +number durationMinutes
+        +number baseFare
+        +number availableSeats
+        +string airline
+    }
+
+    class PriceBreakdown {
+        +number baseFare
+        +number classPrice
+        +number currentPrice
+        +number loyaltyDiscount
+        +number passengerTypeDiscount
+        +number subtotal
+        +number taxes
+        +number fuelSurcharge
+        +number airportFee
+        +number total
+    }
+
+    class ConversionResult {
+        +string currency
+        +number rate
+        +ExchangeRateSource source
+        +string fetchedAt
+        +number baseFareLocal
+        +number totalLocal
+    }
+
+    class ProcessingIssue {
+        +string filter
+        +string code
+        +string message
+        +IssueSeverity severity
+        +any details
+    }
+
+    class ReservationContext {
+        +ReservationRequest request
+        +ReservationStatus status
+        +boolean aborted
+        +Passenger passenger
+        +Flight flight
+        +PriceBreakdown pricing
+        +ExchangeRateData exchangeRate
+        +LocalConversionData conversion
+        +ProcessingIssue[] issues
+        +FilterTrace[] trace
+        +Record metadata
+    }
+
+    class ReservationResult {
+        +string reservationId
+        +ReservationStatus status
+        +object passenger
+        +object flight
+        +PriceBreakdown pricing
+        +ConversionResult conversion
+        +ProcessingIssue[] errors
+        +ProcessingIssue[] warnings
+        +FilterTrace[] trace
+        +string processedAt
+    }
+
+    ReservationContext *-- ReservationInput : envuelve
+    ReservationContext o-- Passenger : referencia
+    ReservationContext o-- Flight : referencia
+    ReservationContext *-- PriceBreakdown : contiene
+    ReservationContext *-- ConversionResult : contiene
+    ReservationContext *-- ProcessingIssue : acumula
+    ReservationResult <.. ReservationContext : proyectado desde

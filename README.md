@@ -1,241 +1,290 @@
-# Sistema de Reservas de Vuelos — Pipes & Filters
+# Sistema de Procesamiento de Reservas de Vuelos (Pipes & Filters)
 
-Backend en Node.js + TypeScript + Express que procesa lotes de reservas de vuelo a traves de un pipeline de filtros independientes. Cada filtro valida, enriquece o calcula una parte del precio, y el contexto de la reserva fluye de un filtro al siguiente.
+Backend en Node.js, TypeScript y Express.js que procesa solicitudes de reservas de vuelos aplicando el patrón arquitectónico **Pipes & Filters** en el mismo proceso. El sistema valida la elegibilidad de pasajeros y vuelos, enriquece las solicitudes con tasas de cambio obtenidas de un servicio externo resiliente, liquida tarifas y descuentos encadenados, aplica tasas e impuestos, y convierte los montos a la moneda local del país de destino.
 
-- Estilo arquitectonico: **Pipes & Filters** en proceso.
-- Integracion externa: **ExchangeRate-API** (sin API key) con timeout, reintentos, cache y tasas de respaldo.
-- Documentacion arquitectonica: [`docs/architecture/architecture.md`](docs/architecture/architecture.md), ADRs en [`docs/adr`](docs/adr) y escenarios de calidad en [`docs/architecture/quality-scenarios`](docs/architecture/quality-scenarios).
+- **Estilo arquitectónico:** Pipes & Filters en memoria con arquitectura de capas estrictas (Routes → Controllers → Services → Pipeline/Filters → Repositories/Providers).
+- **Integración externa:** ExchangeRate-API v4 pública con timeout de 5 s, hasta 3 reintentos con backoff y jitter, caché en memoria (TTL 1 h), *single-flight* y degradación controlada (*stale-cache* o USD).
+- **Documentación de arquitectura completa (SADP 2.0):** [`docs/architecture/architecture.md`](docs/architecture/architecture.md).
+- **Registros de Decisiones de Arquitectura (ADR):** [`docs/adr/`](docs/adr/) (ADR-001 al ADR-008).
+
+---
+
+## Arquitectura del Pipeline
+
+El procesamiento de cada reserva atraviesa una secuencia estrictamente ordenada de 8 filtros independientes desacoplados entre sí:
+
+```
+[ Cliente HTTP ]
+       │
+       ▼
+[ Source (Validación Zod + Enriquecimiento inicial) ]
+       │
+       ├─► F1: validatePassenger (Existencia, estado activo, email, coherencia edad/tipo) [Crítico]
+       ├─► F2: validateFlight (Existencia, asientos disponibles > 0, ruta, fecha futura) [Crítico]
+       ├─► F3: exchangeRateEnrichment (Detección de divisa de destino y consulta de tasa) [No crítico]
+       ├─► F4: basePrice (Tarifa según clase: Economy x1, Business x2.5, First x4) [Crítico]
+       ├─► F5: loyaltyDiscount (Descuento lealtad sobre currentPrice: Bronze 5%, Silver 10%, Gold 15%) [Crítico]
+       ├─► F6: passengerTypeAdjustment (Descuento edad sobre currentPrice: Child 25%, Senior 15%) [Crítico]
+       ├─► F7: taxesAndFees (Impuestos 12%, tasa fija $25, combustible 8% de classPrice) [Crítico]
+       ├─► F8: currencyConversion (Cálculo de baseFareLocal y totalLocal con la tasa) [No crítico]
+       │
+       ▼
+[ Sink (Proyección JSON + Redondeo a 2 decimales round2 + Almacenamiento en Store) ]
+```
+
+Cada filtro recibe un contexto inmutable `ReservationContext`, devuelve una nueva copia del contexto y es supervisado tras su ejecución por `context-guard`, garantizando que ningún importe sea corrupto (`NaN` o negativo).
+
+---
 
 ## Requisitos
 
-- Node.js >= 20 (probado con v22.22.3)
-- npm >= 10
+- **Node.js:** `>= 22.0.0` (LTS recomendado, probado en Node 22).
+- **npm:** `>= 10.0.0`.
 
-## Instalacion
+---
+
+## Instalación
+
+Las dependencias están fijadas con versiones exactas en `package.json` (`save-exact=true`):
 
 ```bash
 npm install
 ```
 
-## Ejecucion
+---
 
-```bash
-npm run dev      # modo desarrollo con recarga (tsx watch)
-npm run build    # compila TypeScript a dist/
-npm start        # ejecuta dist/server.js
-```
+## Variables de Entorno
 
-El servidor escucha en `http://localhost:3000` (configurable con la variable de entorno `PORT`). El nivel de log se controla con `LOG_LEVEL` (`debug`, `info`, `warn`, `error`).
+La configuración de infraestructura se carga y valida al inicio con Zod de forma *fail-fast* (`src/config/env.ts`):
 
-## Pruebas
-
-```bash
-npm test             # 58 pruebas unitarias y de integracion
-npm run test:coverage
-npm run typecheck    # tsc estricto sobre src y tests
-```
-
-Las pruebas nunca llaman a la API externa: el proveedor de tasas y el transporte HTTP se inyectan.
-
-## Endpoints
-
-| Metodo | Ruta | Descripcion |
+| Variable | Descripción | Valor por defecto |
 |---|---|---|
-| `POST` | `/reservations/process` | Procesa un array de reservas a traves del pipeline |
-| `GET` | `/reservations/:id/status` | Resultado del ultimo procesamiento de una reserva |
-| `GET` | `/pipeline/config` | Configuracion vigente del pipeline |
-| `PUT` | `/pipeline/config` | Modifica parcialmente la configuracion de los filtros |
-| `POST` | `/pipeline/config/reset` | Restaura la configuracion por defecto e invalida la cache de tasas |
-| `GET` | `/health` | Chequeo de vida |
+| `PORT` | Puerto TCP en el que escucha el servidor Express | `3000` |
+| `EXCHANGE_API_BASE_URL` | URL base de la API externa de tipo de cambio | `https://api.exchangerate-api.com/v4/latest` |
+| `LOG_LEVEL` | Nivel mínimo de emisión de logs estructurados (Pino) | `info` (`debug`, `info`, `warn`, `error`) |
 
-### POST /reservations/process
+Existe una plantilla `.env.example` en el repositorio:
+```bash
+cp .env.example .env
+```
 
-Request:
+---
 
+## Ejecución
+
+```bash
+# Modo desarrollo con recarga automática (tsx watch)
+npm run dev
+
+# Compilación estricta a dist/ (solo src/, tests excluidos)
+npm run build
+
+# Ejecución en producción
+npm start
+```
+
+---
+
+## Verificación y Tests
+
+El proyecto cuenta con una suite completa de pruebas unitarias y de integración que validan los 16 casos de la consigna y los 7 escenarios de calidad arquitectónicos (AC 1 a AC 7).
+
+```bash
+# Verificación estricta de tipos en TypeScript (src y tests)
+npm run typecheck
+
+# Verificación de linter estricto (ESLint flat config)
+npm run lint
+
+# Ejecución de pruebas automatizadas con Jest y Supertest
+npm test
+```
+
+> **Aislamiento de red:** Las pruebas automatizadas nunca realizan llamadas a la red. El servicio inyecta stubs y simuladores del proveedor de tasas (`ExchangeRateProvider`) y relojes deterministas (`Clock`).
+
+---
+
+## Endpoints de la API
+
+La colección completa de Postman con ejemplos y respuestas guardadas se encuentra en [`postman/flight-reservations.postman_collection.json`](postman/flight-reservations.postman_collection.json).
+
+### 1. `POST /reservations/process`
+Procesa un lote de 1 a 100 reservas de forma concurrente (`Promise.all`). Permite configurar overrides temporales válidos únicamente para ese lote (no muta la configuración global).
+
+**Ejemplo de Request:**
 ```json
 {
   "reservations": [
     {
-      "reservationId": "R-1001",
-      "passengerId": "P012",
+      "id": "R-1001",
+      "passengerId": "P001",
       "flightCode": "AA001",
-      "origin": "EZE",
-      "destination": "MIA",
+      "origin": "JFK",
+      "destination": "EZE",
+      "departureDate": "2026-10-08",
       "seatClass": "economy",
-      "seats": 1
+      "passengerType": "adult"
     }
   ],
-  "config": { "enabledFilters": { "loyaltyDiscount": false } }
+  "config": {
+    "enabledFilters": {
+      "loyaltyDiscount": true
+    }
+  }
 }
 ```
 
-`config` es opcional y aplica **solo a ese request**, sin mutar la configuracion global.
-
-Response:
-
+**Ejemplo de Response (HTTP 200 OK):**
 ```json
 {
-  "processingTimeMs": 12.4,
-  "summary": { "total": 1, "processed": 1, "processedWithWarnings": 0, "rejected": 0, "failed": 0 },
+  "processingTimeMs": 14.5,
+  "summary": {
+    "total": 1,
+    "confirmed": 1,
+    "rejected": 0,
+    "failed": 0
+  },
   "results": [
     {
       "reservationId": "R-1001",
-      "status": "processed",
-      "passenger": { "id": "P012", "fullName": "Luis Fernandez", "passengerType": "adult", "loyaltyTier": "none" },
-      "flight": { "flightCode": "AA001", "origin": "EZE", "destination": "MIA", "destinationCountryCode": "US" },
-      "pricing": {
-        "flightBasePriceUsd": 450,
-        "classAdjustedPriceUsd": 450,
-        "loyaltyDiscountUsd": 0,
-        "passengerTypeDiscountUsd": 0,
-        "netPriceUsd": 450,
-        "taxesUsd": 54,
-        "airportFeeUsd": 25,
-        "fuelSurchargeUsd": 36,
-        "totalUsd": 565
+      "status": "CONFIRMED",
+      "passenger": {
+        "id": "P001",
+        "fullName": "Ana Gomez",
+        "passengerType": "adult",
+        "loyaltyTier": "gold"
       },
-      "currency": { "baseCurrency": "USD", "targetCurrency": "USD", "rate": 1, "rateSource": "identity" },
+      "flight": {
+        "flightCode": "AA001",
+        "origin": "JFK",
+        "destination": "EZE",
+        "departureDate": "2026-10-08",
+        "destinationCountry": "AR"
+      },
+      "pricing": {
+        "baseFare": 450,
+        "classPrice": 450,
+        "currentPrice": 382.5,
+        "loyaltyDiscount": 67.5,
+        "passengerTypeDiscount": 0,
+        "subtotal": 382.5,
+        "taxes": 45.9,
+        "fuelSurcharge": 36,
+        "airportFee": 25,
+        "total": 489.4
+      },
+      "conversion": {
+        "currency": "ARS",
+        "rate": 1400,
+        "source": "api",
+        "fetchedAt": "2026-09-17T19:00:00.000Z",
+        "baseFareLocal": 630000,
+        "totalLocal": 685160
+      },
       "errors": [],
       "warnings": [],
-      "trace": [{ "filter": "validatePassenger", "status": "executed", "durationMs": 0.6 }]
+      "trace": [
+        { "filter": "validatePassenger", "status": "COMPLETED", "durationMs": 0.5 },
+        { "filter": "validateFlight", "status": "COMPLETED", "durationMs": 0.4 },
+        { "filter": "exchangeRateEnrichment", "status": "COMPLETED", "durationMs": 8.2 },
+        { "filter": "basePrice", "status": "COMPLETED", "durationMs": 0.2 },
+        { "filter": "loyaltyDiscount", "status": "COMPLETED", "durationMs": 0.2 },
+        { "filter": "passengerTypeAdjustment", "status": "COMPLETED", "durationMs": 0.1 },
+        { "filter": "taxesAndFees", "status": "COMPLETED", "durationMs": 0.2 },
+        { "filter": "currencyConversion", "status": "COMPLETED", "durationMs": 0.2 }
+      ],
+      "processedAt": "2026-09-17T19:00:00.020Z"
     }
   ]
 }
 ```
 
-Estados posibles de una reserva:
+---
 
-| Estado | Significado |
-|---|---|
-| `processed` | Procesada sin errores ni warnings |
-| `processed_with_warnings` | Procesada, con avisos no bloqueantes (por ejemplo, tasa de respaldo) |
-| `rejected` | Error de negocio detectado por un filtro de validacion |
-| `failed` | Un filtro lanzo una excepcion inesperada |
+### 2. `GET /reservations/:id/status`
+Recupera el estado y desglose de procesamiento de una reserva individual almacenada en el historial en memoria (acotado a 1000 entradas FIFO).
 
-El campo `trace` indica, por filtro, si fue `executed`, `skipped` (reserva ya rechazada), `disabled` (apagado por configuracion) o `failed`.
-
-## Pipeline de filtros
-
-Orden por defecto:
-
-1. `validatePassenger` — existencia, estado activo, contacto y coherencia edad/tipo.
-2. `validateFlight` — existencia, asientos disponibles, ruta y fecha futura.
-3. `exchangeRateEnrichment` — detecta la moneda del pais de destino y obtiene la tasa vigente (unica llamada externa).
-4. `basePrice` — precio base x asientos x multiplicador de clase.
-5. `loyaltyDiscount` — descuento por tier de lealtad.
-6. `passengerTypeAdjustment` — ajuste por tipo de pasajero.
-7. `taxesAndFees` — impuestos, tasa de aeropuerto y sobrecargo por combustible.
-8. `currencyConversion` — aplica la tasa ya obtenida sobre el total final.
-
-### Por que el tipo de cambio esta partido en dos filtros
-
-La consigna ubica el filtro de tipo de cambio en la posicion 3, antes del calculo del precio. Convertir un precio que todavia no existe no tiene sentido, por lo que la responsabilidad se dividio: `exchangeRateEnrichment` conserva la posicion 3 y hace la llamada externa (deteccion de moneda, timeout, reintentos, cache, fallback), y `currencyConversion` aplica la tasa al cierre del pipeline, cuando ya hay un total. La justificacion completa esta en [ADR-007](docs/adr/ADR-007-orden-pipeline-tipo-de-cambio.md).
-
-### Reglas de negocio
-
-Todas viven en la configuracion, no en el codigo de los filtros:
-
-| Regla | Valor por defecto |
-|---|---|
-| Clase economy / business / first | x1 / x2.5 / x4 |
-| Lealtad bronze / silver / gold | 5% / 10% / 15% |
-| Tipo child (<12) / adult / senior (>65) | 25% / 0% / 15% |
-| Impuestos | 12% del precio neto |
-| Tasa de aeropuerto | USD 25 fijos |
-| Sobrecargo por combustible | 8% del precio base del vuelo |
-
-Los descuentos se aplican **en cascada**, en el orden de los filtros: el descuento por tipo de pasajero se calcula sobre el precio ya descontado por lealtad.
-
-Ejemplo (nino silver en business, vuelo IB6841 de USD 890):
-
-```
-890 x 2.5            = 2225.00   precio ajustado por clase
-- 10% lealtad        = 2002.50
-- 25% tipo pasajero  = 1501.87   precio neto
-+ 12% impuestos      =  180.22
-+ tasa aeropuerto    =   25.00
-+ 8% combustible     =   71.20   (sobre los 890 originales)
-= total              = 1778.29 USD
-```
-
-## Integracion con la API de tipo de cambio
-
-- Proveedor: `https://api.exchangerate-api.com/v4/latest/{base}` (sin autenticacion).
-- Timeout de 5 s por intento (`AbortController`), hasta 3 intentos con backoff lineal.
-- Cache en memoria de las tasas por moneda base, TTL de 1 hora, invalidable con `POST /pipeline/config/reset` o al modificar `exchangeRate` via `PUT /pipeline/config`.
-- Si la API falla, se usa la tasa de respaldo configurada y se agrega el warning `EXCHANGE_RATE_FALLBACK`. Si tampoco hay respaldo para la moneda, la reserva continua en USD con el warning `EXCHANGE_RATE_UNAVAILABLE`.
-- El mapa pais -> moneda esta en `src/services/exchangeRate/countryCurrency.ts` (`AR` -> `ARS`, `BR` -> `BRL`, `US` -> `USD`, `ES`/`IT`/`FR` -> `EUR`, etc.).
-
-Ningun fallo de la integracion externa rechaza una reserva.
-
-## Configuracion del pipeline
-
-`GET /pipeline/config` devuelve el objeto completo. `PUT /pipeline/config` acepta un parche parcial validado:
-
+**Response (HTTP 200 OK):**
 ```json
 {
-  "enabledFilters": { "currencyConversion": false },
-  "loyaltyDiscounts": { "gold": 0.2 },
-  "taxes": { "airportFeeUsd": 30 },
-  "filterOrder": ["validatePassenger", "validateFlight", "basePrice", "taxesAndFees"],
-  "exchangeRate": { "timeoutMs": 3000, "maxRetries": 2, "cacheTtlMs": 600000 }
+  "reservationId": "R-1001",
+  "status": "CONFIRMED",
+  "updatedAt": "2026-09-17T19:00:00.020Z",
+  "result": {
+    "reservationId": "R-1001",
+    "status": "CONFIRMED",
+    "pricing": { "total": 489.4 }
+  }
+}
+```
+*Si la reserva no fue procesada o fue desalojada por el límite de 1000 registros, retorna HTTP 404.*
+
+---
+
+### 3. `GET /pipeline/config`
+Retorna la configuración global vigente del pipeline, los filtros habilitados y el orden inmutable de etapas.
+
+---
+
+### 4. `PUT /pipeline/config`
+Modifica en caliente la configuración global de los filtros (parches parciales). Valida estrictamente el esquema con Zod (rechaza campos desconocidos como `filterOrder` o `apiBaseUrl` con HTTP 400).
+
+**Request:**
+```json
+{
+  "enabledFilters": {
+    "loyaltyDiscount": false
+  },
+  "taxes": {
+    "airportFeeUsd": 30
+  }
 }
 ```
 
-Claves desconocidas o valores fuera de rango devuelven `400 INVALID_CONFIG` con el detalle por campo.
+---
 
-## Datos de prueba
+### 5. `POST /pipeline/cache/invalidate`
+Purga inmediatamente la memoria caché de tasas de cambio (HTTP 204 No Content).
 
-Los datos mock se cargan en memoria al iniciar la aplicacion.
+---
 
-Pasajeros (`src/data/mockPassengers.ts`):
+### 6. `POST /pipeline/config/reset`
+Restaura la configuración a sus valores por defecto de fábrica y limpia la caché de tasas.
 
-| ID | Edad | Tipo | Lealtad | Pais | Activo | Uso |
-|---|---|---|---|---|---|---|
-| P001 | 34 | adult | gold | AR | si | descuento por lealtad maximo |
-| P002 | 41 | adult | silver | BR | si | caso general |
-| P003 | 8 | child | silver | ES | si | descuentos combinados |
-| P004 | 71 | senior | gold | US | si | multiples ajustes |
-| P005 | 29 | adult | bronze | MX | si | descuento minimo |
-| P006 | 50 | adult | silver | IT | **no** | validacion de estado |
-| P007 | 68 | senior | silver | BR | si | senior con lealtad |
-| P008 | 10 | child | none | AR | si | nino sin lealtad |
-| P009 | 9 | adult | none | CL | si | incoherencia edad/tipo |
-| P010 | 70 | adult | bronze | PE | si | incoherencia edad/tipo |
-| P011 | 37 | adult | none | UY | si | contacto invalido |
-| P012 | 45 | adult | none | US | si | caso base sin descuentos |
+---
 
-Vuelos (`src/data/mockFlights.ts`): `AA001` EZE-MIA (450 USD, 12 asientos), `LA4567` EZE-GRU (180, 3), `IB6841` EZE-MAD (890, 40), `AR1140` AEP-MDZ (95, 60), `AM0404` MEX-JFK (320, **0 asientos**), `AF0416` CDG-EZE (1100, 8), `LA800` SCL-LIM (210, 25), `QF0012` SYD-LAX (1450, 5), `LA4570` EZE-GRU (**fecha ya pasada**).
+## Desvíos Aceptados del Proyecto
 
-Las fechas de salida se calculan relativas al momento de carga para que los datos no caduquen.
+- **D1. Procesamiento concurrente del lote con `Promise.all` (Anulado el procesamiento secuencial en F6):**  
+  Para cumplir el escenario de calidad **AC 1** (asegurar un máximo de 3 intentos de red por lote gracias a la táctica de *single-flight*), las reservas de un lote deben procesarse concurrentemente en lugar de secuencialmente. En secuencial, cada reserva abría su propia tanda de reintentos porque la anterior ya había vaciado la promesa. Se restituyó `Promise.all` conforme al PLAN original §7.
+- **D2. Mantenimiento de `ts-jest` y `tsx`:**  
+  Se conservaron las herramientas `ts-jest` para la ejecución de pruebas y `tsx watch` para desarrollo en lugar de babel-jest y `node --watch`, garantizando tipado estricto inmediato y estabilidad.
+- **D3. Enums de dominio en minúscula:**  
+  Los valores de enums de negocio se definen en minúscula (`gold`, `child`, `economy`, `silver`, etc.) para máxima compatibilidad con cargas JSON habituales, mientras que los estados de ciclo de vida (`CONFIRMED`, `REJECTED`, `FAILED`) y códigos de error (`PASSENGER_NOT_FOUND`, `NO_SEATS`, etc.) permanecen en MAYÚSCULAS.
 
-## Coleccion de Postman
+---
 
-`postman/flight-reservations.postman_collection.json` — importar en Postman y ajustar la variable `baseUrl`. Incluye los grupos: flujo basico, calculo de precios, integracion con tipo de cambio (incluidos fallback y timeout forzados) y configuracion del pipeline.
+## Riesgos y Limitaciones Conocidas (PLAN §12.1)
 
-## Estructura del proyecto
+1. **Ausencia de autenticación en endpoints de administración:**  
+   `PUT /pipeline/config` y `POST /pipeline/cache/invalidate` no implementan autenticación ni autorización por rol. Esta es una limitación deliberada del alcance académico (ADR-006). En entornos productivos, estas rutas deben restringirse a nivel perimetral o protegerse con JWT/API Keys.
+2. **Falta de persistencia y escalado horizontal:**  
+   La configuración, la caché de cotizaciones y el almacén de resultados (`ProcessingStore`) residen exclusivamente en la memoria RAM de la instancia de Node.js (ADR-008). Múltiples réplicas en balanceador tendrían estados desincronizados.
+3. **Deprecación de ExchangeRate-API v4:**  
+   El servicio público v4 de ExchangeRate-API está marcado como legado por el proveedor (devuelve `"WARNING_UPGRADE_TO_V6"`). Como mitigación, la URL es configurable vía variable de entorno (`EXCHANGE_API_BASE_URL`), la integración se aísla tras la interfaz `ExchangeRateProvider` y el esquema Zod ignora campos adicionales de advertencia.
+4. **No decremento de asientos en vuelos:**  
+   El filtro `validateFlight` constata cupo disponible (`availableSeats > 0`), pero no decrementa el cupo en los datos mock para preservar el determinismo y la repetibilidad de la suite de pruebas automatizadas.
 
-```
-src/
-  app.ts, server.ts            arranque HTTP
-  api/                         rutas, validacion con zod, manejo de errores
-  config/pipelineConfig.ts     configuracion mutable del pipeline
-  data/                        datos mock de pasajeros y vuelos
-  domain/                      tipos y contexto de reserva
-  pipeline/                    orquestador, contrato de filtro, registry y filtros
-  repositories/                acceso de lectura a los datos mock
-  services/exchangeRate/       puerto, cliente HTTP, cache y mapa de monedas
-  services/                    servicio de procesamiento y proyeccion de resultados
-  store/processingStore.ts     estado de procesamiento por reserva
-  support/                     logger y utilidades monetarias
-tests/                         pruebas unitarias por filtro e integracion HTTP
-docs/                          documentacion arquitectonica y ADRs
-postman/                       coleccion de ejemplos
-```
+---
 
-## Limitaciones conocidas
+## Uso de Inteligencia Artificial
 
-- Todo el estado (configuracion, cache de tasas, resultados) vive en memoria del proceso: se pierde al reiniciar y no es compartido entre instancias.
-- `PUT /pipeline/config` no tiene autenticacion; en un entorno real requeriria control de acceso.
-- El pipeline procesa las reservas de un lote de forma secuencial.
-- Los precios base se asumen en USD, segun la consigna.
+En estricto cumplimiento con el reglamento de la cátedra (`Condiciones de uso de IA en Obligatorios.pdf`), se declara el uso asistido de herramientas de IA Generativa durante el desarrollo:
+
+| Herramienta | Uso principal | Componentes / Documentos afectados | Método de verificación humana |
+|---|---|---|---|
+| **Claude Code (Anthropic)** | Análisis de requerimientos, diseño del plan de construcción y revisión cruzada de diffs. | `docs/plan/PLAN.md`, contratos de dominio y estructuración de tests de integración. | Ejecución de suite completa de pruebas Supertest y cálculo manual de desgloses de precio. |
+| **Google Antigravity (Gemini)** | Construcción del pipeline, filtros, esquemas Zod, diagramas Mermaid y documentación SADP 2.0. | `src/pipeline/`, `src/services/`, `architecture.md`, `README.md`, `postman/` y ADRs. | Compilación estricta con `tsc`, linteo estricto con `eslint` y auditoría de código línea por línea. |
+| **Devin (`devin-local`)** | Análisis comparativo de alternativas de desglose tarifario y riesgos. | Definición de la separación del filtro 8 (`currencyConversion`) en ADR-007. | Contraste crítico documentado en `docs/plan/PLAN-REVIEW-LOG.md`. |
+
+*Todo el código y la arquitectura han sido comprendidos, verificados y preparados para su defensa individual obligatoria.*

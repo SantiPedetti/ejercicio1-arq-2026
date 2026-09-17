@@ -1,0 +1,21 @@
+deploymentDiagram
+    node ClientNode as "Nodo Cliente\n[Estación de Trabajo / Postman / Runner CI]" {
+        artifact PostmanColl as "flight-reservations.postman_collection.json"
+        artifact TestSuite as "Suite Jest / Supertest"
+    }
+
+    node ServerHost as "Nodo Servidor de Aplicación\n[Host Físico / VM / Contenedor]\nOS: Linux / Windows / macOS" {
+        node NodeRuntime as "Entorno de Ejecución Node.js\n[Node.js >= 22 (LTS)]" {
+            component AppProcess as "Proceso: flight-reservation-pipeline\n[PID en memoria]\nEscucha en 0.0.0.0:3000" {
+                artifact DistBundle as "dist/server.js\n(JavaScript compilado)"
+                artifact MemoryState as "Estado en Memoria RAM\n(Caché 1h, Repos Mock, Store 1000)"
+            }
+        }
+    }
+
+    node CloudAPI as "Nodo Externo: ExchangeRate-API Cloud\n[Infraestructura de Terceros]" {
+        component APIService as "ExchangeRate-API v4 Endpoint\nhttps://api.exchangerate-api.com"
+    }
+
+    ClientNode -- ServerHost : Conector HTTP Local/LAN [TCP/IP:3000]\nLlamadas síncronas REST JSON
+    ServerHost -- CloudAPI : Conector HTTPS WAN [TCP/IP:443]\nTLS 1.3, Timeout 5s, 3 intentos

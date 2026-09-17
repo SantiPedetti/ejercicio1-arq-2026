@@ -1,95 +1,31 @@
-# ADR-001: Adoptar Pipes & Filters en proceso con contexto compartido
+# ADR 1: Pipes & Filters en el mismo proceso dentro de capas estrictas
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada (el estilo lo impone la consigna; la forma concreta de implementarlo es la decision registrada aqui)
+El sistema debe procesar solicitudes de reservas de vuelos aplicando una serie de etapas secuenciales: validaciones de pasajero y vuelo, obtencion de tasas de cambio externas, calculo escalonado de precios (clase, descuentos de lealtad y edad, impuestos y tasas) y conversion a moneda local. Los requisitos de modificabilidad (AC 2, AC 3) demandan poder anadir, quitar o desactivar filtros sin alterar la logica de los demas pasos ni el orquestador. Por otro lado, la consigna exige un backend en Node.js, TypeScript y Express.js que responda de forma sincrona con el tiempo total del lote, acotando la complejidad de despliegue a un entorno controlado.
 
-## Contexto
+## Decisión
 
-El sistema debe aplicar siete reglas de procesamiento independientes a cada reserva (dos validaciones, un enriquecimiento externo y cuatro etapas de calculo), en un orden definido, con la posibilidad de habilitar o deshabilitar etapas y con cada etapa testeable por separado. La consigna impone el estilo Pipes & Filters, por lo que la decision no es *si* usarlo, sino *como*: que es un "pipe", que contrato tiene un filtro y quien orquesta.
+Nosotros implementaremos el procesamiento de reservas utilizando el patron arquitectonico Pipes & Filters ejecutado en memoria dentro del mismo proceso Node.js, estructurado bajo una jerarquia de capas estrictas (Routes → Controllers → Services → Pipeline/Filters → Repositories/Providers). El flujo de cada reserva atravesara una tuberia de 8 filtros secuenciales independientes que reciben un contexto y devuelven un nuevo contexto enriquecido.
 
-Fuerzas en juego:
+## Justificación
 
-- Las reglas cambian por motivos distintos y a ritmos distintos (comercial, regulatorio, operativo).
-- El resultado debe volver de forma sincronica en la respuesta de `POST /reservations/process`, junto con el tiempo total de procesamiento.
-- Cada filtro debe poder probarse aislado, sin HTTP y sin red.
-- El orden de las etapas es un dato del negocio y debe poder cambiarse.
+El patron Pipes & Filters desacopla las responsabilidades de calculo, validacion y transformacion: cada filtro se enfoca en una unica tarea de negocio y no conoce la existencia ni la implementacion de los otros filtros. Mantenerlo dentro del mismo proceso satisface la necesidad de respuesta sincrona para el lote y preserva la simplicidad operativa requerida.
 
-## Requerimientos relacionados
+Alternativas consideradas y rechazadas:
+1. Servicio monolitico con una unica funcion imperativa: Aunque reduce la indireccion, acopla rigidamente las reglas de negocio, impidiendo desactivar filtros por configuracion en caliente (AC 3) y dificultando el testeo unitario aislado de cada regla (AC 6).
+2. Arquitectura distribuida basada en colas de mensajes (RabbitMQ, Kafka o AWS SQS): Introducir brokers externos para un procesamiento por lote en memoria constituye sobreingenieria innecesaria (discutido en clase del 10/09), aumenta la complejidad de despliegue y choca con el requerimiento de computar y devolver de inmediato el tiempo total de procesamiento en la respuesta HTTP.
+3. Capas relajadas con saltos directos (e.g. rutas accediendo a repositorios o filtros accediendo a la base de datos): Rechazada porque viola las reglas de la catedra sobre unidireccionalidad de capas, diluyendo los limites arquitectonicos.
 
-- RF: RF-01 (procesar lote), RF-02, RF-03, RF-04, RF-05.
-- Atributos de calidad: QA-01 modificabilidad, QA-04 testabilidad.
-- Restricciones tecnicas: RT-01 (Node/TypeScript/Express), RT-02 (estilo impuesto).
-- Restricciones organizacionales: RO-03 (filtros independientes y testeables por separado).
+## Estado
 
-## Opciones consideradas
+Aceptado
 
-Esta comparacion es un **analisis actual**: no hay evidencia de que estas alternativas se hayan evaluado y descartado historicamente.
+## Consecuencias
 
-### Opcion A — Cadena secuencial en memoria con contrato uniforme `Filter` (elegida)
+Positivas:
+- Alta modificabilidad (AC 2): agregar, reemplazar o reconfigurar un filtro no requiere modificar el runner (`Pipeline`) ni los demas filtros.
+- Excelente testeabilidad (AC 6): cada filtro se prueba unitariamente mediante inyeccion de dependencias sin levantar el servidor Express ni tocar la red.
+- Composicion y aislamiento: se define una frontera clara entre las capas de transporte HTTP, coordinacion de aplicacion, logica de procesamiento y acceso a datos.
 
-- Ventajas: resultado sincronico y ordenado; sin infraestructura adicional; cada filtro es una unidad reemplazable con interfaz identica; el orden y la habilitacion se expresan como datos; pruebas unitarias directas.
-- Desventajas: sin concurrencia entre etapas; el acoplamiento entre filtros es implicito, via los datos que dejan en el contexto.
-- Impacto sobre atributos de calidad: maximiza modificabilidad y testabilidad; rendimiento limitado al de un unico hilo, aceptable para el volumen del ejercicio.
-
-### Opcion B — Pipeline con streams de Node (`Transform`)
-
-- Ventajas: vocabulario nativo de pipes; backpressure gratuito; natural para lotes muy grandes.
-- Desventajas: el manejo de errores por elemento es engorroso (un `error` en un stream suele destruir la tuberia); mezclar streams con `async/await` y con acumulacion de diagnostico por reserva complica el codigo sin beneficio visible; el tipado es mas debil.
-- Impacto: perjudica QA-03 (aislamiento de fallos por reserva) y QA-04 sin mejorar los atributos priorizados.
-
-### Opcion C — Filtros como servicios desacoplados por colas o eventos (broker)
-
-- Ventajas: desacople temporal, escalado independiente por etapa, reintentos por etapa.
-- Desventajas: infraestructura ausente en el alcance (RO-02); orden y correlacion de resultados a resolver a mano; incompatible con devolver el resultado completo en la respuesta HTTP del request.
-- Impacto: mejoraria escalabilidad futura a costa de violar RF-01 y RO-02.
-
-### Opcion D — Un unico servicio con las reglas en orden fijo
-
-- Ventajas: menos archivos, lectura lineal del calculo completo, menor indireccion.
-- Desventajas: imposible cumplir RF-08 sin condicionales dispersos; probar una regla exige ejercitar el calculo completo; cualquier cambio toca el mismo archivo.
-- Impacto: degrada QA-01 y QA-04, que son los atributos de prioridad alta; ademas contradice RT-02.
-
-## Decision
-
-Se implementa el pipeline como una **cadena secuencial en memoria** (Opcion A): `Pipeline` recibe una lista ordenada de objetos que cumplen la interfaz `Filter` (`name` + `execute(context)`) y los aplica uno tras otro sobre un `ReservationContext`. Los filtros se construyen mediante fabricas `(deps: FilterDependencies) => Filter` y se registran por nombre en `FILTER_FACTORIES`; la lista efectiva se arma leyendo `config.filterOrder`. El alcance abarca las ocho etapas actuales y cualquier etapa futura de procesamiento de reservas.
-
-## Justificacion
-
-Las fuerzas prioritarias son modificabilidad y testabilidad, no throughput. La interfaz uniforme es exactamente el mecanismo que permite que el orquestador ignore la semantica de cada etapa y que el orden sea configuracion; las fabricas con dependencias inyectadas son lo que permite probar un filtro con un reloj fijo y un proveedor de tasas falso. Las opciones B y C resuelven problemas de escala que este sistema no tiene, y la D sacrifica precisamente los atributos priorizados.
-
-## Consecuencias positivas
-
-- Agregar una etapa es un archivo nuevo y tres lineas de registro, sin tocar el orquestador ni otros filtros (ver AC-002).
-- Cada filtro se prueba en aislamiento; las 58 pruebas corren sin red ni servidor.
-- El orden y la habilitacion de etapas son datos, lo que habilita RF-08.
-- No se agregan dependencias de infraestructura.
-
-## Consecuencias negativas y trade-offs
-
-- El calculo total no se lee en un solo lugar: hay que recorrer ocho filtros para reconstruirlo.
-- Existe acoplamiento implicito por el orden: un filtro asume que otro ya escribio en el contexto.
-- El procesamiento es secuencial: un lote grande con integracion lenta acumula latencia.
-- Mas archivos y mas indireccion que una implementacion directa.
-
-## Riesgos y mitigaciones
-
-| Riesgo | Probabilidad o impacto | Mitigacion |
-|---|---|---|
-| Un `filterOrder` mal configurado deja etapas sin precondiciones | Media / alto (precios incorrectos) | Cada filtro de precio verifica sus precondiciones y rechaza con `PRICING_NOT_INITIALIZED` o `FLIGHT_NOT_RESOLVED` en lugar de calcular mal |
-| Olvido de registrar un filtro nuevo | Baja / medio | `FILTER_FACTORIES` es un `Record<FilterName, FilterFactory>`: el compilador exige la entrada |
-| Latencia acumulada en lotes grandes | Media / medio | Cache de tasas, timeout acotado y tope de 200 reservas por request; paralelizacion por reserva queda como Propuesta |
-
-## Evidencia
-
-- Consigna, secciones "Objetivo", "Filtros a Implementar" y "Aclaraciones".
-- `src/pipeline/pipeline.ts`, `src/pipeline/filter.ts`, `src/pipeline/registry.ts`.
-- `tests/pipeline/pipeline.test.ts` (orden de ejecucion, filtro deshabilitado, aislamiento de fallos).
-
-## Decisiones relacionadas
-
-- [ADR-002 — Contexto mutable acumulativo](ADR-002-contexto-mutable.md)
-- [ADR-003 — Aislamiento de fallos por filtro](ADR-003-aislamiento-de-fallos.md)
-- [ADR-005 — Configuracion del pipeline mutable en memoria](ADR-005-configuracion-mutable.md)
-- [ADR-007 — Orden del pipeline y separacion del filtro de tipo de cambio](ADR-007-orden-pipeline-tipo-de-cambio.md)
+Negativas:
+- Sobrecarga por indireccion: el paso de mensajes por la tuberia y la ejecucion asincrona de etapas sucesivas introduce un pequeno overhead de latencia frente a un bloque imperativo directo.
+- El modelo en memoria limita la escalabilidad al espacio de memoria y ciclo de vida de una unica instancia del proceso Node.js.
