@@ -134,6 +134,6 @@ describe('cadena de filtros de precio', () => {
     const context = await createLoyaltyDiscountFilter(deps).execute(contextFor());
 
     expect(context.status).toBe('REJECTED');
-    expect(issueCodes(context)).toEqual(['PRICING_NOT_INITIALIZED']);
+    expect(issueCodes(context)).toEqual(['MISSING_DATA']);
   });
 });

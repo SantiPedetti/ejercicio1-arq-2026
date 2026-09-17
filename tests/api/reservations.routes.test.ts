@@ -115,8 +115,20 @@ describe('POST /reservations/process', () => {
 
     expect(response.body.results[0].pricing.loyaltyDiscountUsd).toBe(0);
     expect(response.body.results[0].trace).toEqual(
-      expect.arrayContaining([expect.objectContaining({ filter: 'loyaltyDiscount', status: 'disabled' })])
+      expect.arrayContaining([expect.objectContaining({ filter: 'loyaltyDiscount', status: 'SKIPPED' })])
     );
+  });
+
+  it('rechaza con 400 si se intenta sobreescribir exchangeRate en config del request', async () => {
+    const response = await request(appWith())
+      .post('/reservations/process')
+      .send({
+        reservations: [reservation()],
+        config: { exchangeRate: { defaultRate: 2 } }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('INVALID_REQUEST');
   });
 
   it('marca REJECTED con INVALID_RESERVATION a una reserva malformada dentro del lote sin dar 400', async () => {

@@ -17,9 +17,9 @@ function toFlight(now: Date, [code, orig, dest, oCntry, dCntry, days, dur, fare,
   const dep = new Date(now.getTime() + days * DAY_MS).toISOString();
   return {
     code, flightCode: code, origin: orig, destination: dest,
-    originCountry: oCntry, destinationCountry: dCntry, destinationCountryCode: dCntry,
-    departureAt: dep, departureDate: dep, durationMinutes: dur,
-    baseFare: fare, basePriceUsd: fare, availableSeats: seats, airline: air
+    originCountry: oCntry, destinationCountry: dCntry,
+    departureAt: dep, durationMinutes: dur,
+    baseFare: fare, availableSeats: seats, airline: air
   };
 }
 

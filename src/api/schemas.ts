@@ -28,7 +28,6 @@ export const reservationRequestSchema = singleReservationSchema;
 
 export const pipelineConfigPatchSchema = z
   .object({
-    filterOrder: z.array(filterNameSchema).min(1).optional(),
     enabledFilters: z.partialRecord(filterNameSchema, z.boolean()).optional(),
     seatClassMultipliers: z.partialRecord(seatClassSchema, z.number().positive()).optional(),
     loyaltyDiscounts: z.partialRecord(loyaltyTierSchema, rateSchema).optional(),
@@ -55,6 +54,8 @@ export const pipelineConfigPatchSchema = z
   })
   .strict();
 
+export const requestConfigSchema = pipelineConfigPatchSchema.omit({ exchangeRate: true }).strict();
+
 function extractSentId(item: unknown): string | undefined {
   if (item && typeof item === 'object' && 'id' in item) {
     const id = (item as { id: unknown }).id;
@@ -79,7 +80,7 @@ function validateDuplicateIds(items: unknown[], ctx: z.RefinementCtx): void {
 export const processReservationsSchema = z
   .object({
     reservations: z.array(z.unknown()).min(1).max(100),
-    config: pipelineConfigPatchSchema.optional()
+    config: requestConfigSchema.optional()
   })
   .strict()
   .superRefine((data, ctx) => validateDuplicateIds(data.reservations, ctx));

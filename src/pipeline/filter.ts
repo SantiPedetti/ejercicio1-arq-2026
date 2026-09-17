@@ -26,6 +26,7 @@ export interface FilterDependencies {
  */
 export interface Filter {
   readonly name: FilterName;
+  readonly critical: boolean;
   /**
    * Cuando es true el filtro se ejecuta incluso si la reserva ya fue rechazada
    * (por ejemplo, filtros de auditoria). Por defecto es false.

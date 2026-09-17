@@ -1,4 +1,4 @@
-import { FilterName, PipelineConfig } from '../config/pipelineConfig';
+import { FILTER_NAMES, FilterName, PipelineConfig } from '../config/pipelineConfig';
 import { Filter, FilterDependencies, FilterFactory } from './filter';
 import { createBasePriceFilter } from './filters/basePrice.filter';
 import { createCurrencyConversionFilter } from './filters/currencyConversion.filter';
@@ -25,14 +25,18 @@ export const FILTER_FACTORIES: Record<FilterName, FilterFactory> = {
   currencyConversion: createCurrencyConversionFilter
 };
 
-export function buildFilters(config: PipelineConfig, deps: FilterDependencies): Filter[] {
-  return config.filterOrder
+export function buildFilters(
+  depsOrConfig: FilterDependencies | PipelineConfig,
+  maybeDeps?: FilterDependencies
+): Filter[] {
+  const deps = maybeDeps ?? (depsOrConfig as FilterDependencies);
+  return FILTER_NAMES
     .filter((name) => FILTER_FACTORIES[name] !== undefined)
     .map((name) => FILTER_FACTORIES[name](deps));
 }
 
 export function createPipeline(config: PipelineConfig, deps: FilterDependencies): Pipeline {
-  return new Pipeline(buildFilters(config, deps), {
+  return new Pipeline(buildFilters(deps), {
     enabledFilters: config.enabledFilters,
     logger: deps.logger
   });

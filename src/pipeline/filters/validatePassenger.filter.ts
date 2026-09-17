@@ -70,15 +70,17 @@ function validatePassengerDetails(context: ReservationContext, passenger: Passen
 
 class ValidatePassengerFilter implements Filter {
   readonly name = FILTER;
+  readonly critical = true;
 
   constructor(private readonly passengers: FilterDependencies['passengers']) {}
 
   execute(context: ReservationContext): ReservationContext {
     const passenger = this.passengers.findById(context.request.passengerId);
     const notFound = checkPassengerFound(context, passenger);
-    if (notFound || !passenger) return context;
-    context.passenger = passenger;
-    return validatePassengerDetails(context, passenger) ?? context;
+    if (notFound) return notFound;
+    if (!passenger) return context;
+    const withPassenger = { ...context, passenger };
+    return validatePassengerDetails(withPassenger, passenger) ?? withPassenger;
   }
 }
 

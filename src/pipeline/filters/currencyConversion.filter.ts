@@ -1,11 +1,10 @@
 import { addWarning, rejectReservation, ReservationContext } from '../../domain/reservationContext';
-import { round2 } from '../../support/money';
 import { Filter, FilterFactory } from '../filter';
 
 const FILTER = 'currencyConversion' as const;
 
-function warnMissingCurrency(context: ReservationContext): void {
-  addWarning(
+function warnMissingCurrency(context: ReservationContext): ReservationContext {
+  return addWarning(
     context,
     FILTER,
     'CURRENCY_METADATA_MISSING',
@@ -13,26 +12,29 @@ function warnMissingCurrency(context: ReservationContext): void {
   );
 }
 
-function applyConversion(context: ReservationContext): void {
-  if (context.pricing && context.currency) {
-    context.currency.convertedTotal = round2(context.pricing.totalUsd * context.currency.rate);
-    context.metadata.convertedCurrency = context.currency.targetCurrency;
-  }
+function applyConversion(context: ReservationContext): ReservationContext {
+  if (!context.pricing || !context.currency) return context;
+  const total = context.pricing.total ?? context.pricing.totalUsd ?? 0;
+  const convertedTotal = total * context.currency.rate;
+  return {
+    ...context,
+    currency: { ...context.currency, convertedTotal },
+    metadata: { ...context.metadata, convertedCurrency: context.currency.targetCurrency }
+  };
 }
 
 class CurrencyConversionFilter implements Filter {
   readonly name = FILTER;
+  readonly critical = false;
 
   execute(context: ReservationContext): ReservationContext {
     if (!context.pricing) {
-      return rejectReservation(context, FILTER, 'PRICING_NOT_INITIALIZED', 'No hay desglose de precios para convertir');
+      return rejectReservation(context, FILTER, 'MISSING_DATA', 'No hay desglose de precios para convertir');
     }
     if (!context.currency) {
-      warnMissingCurrency(context);
-      return context;
+      return warnMissingCurrency(context);
     }
-    applyConversion(context);
-    return context;
+    return applyConversion(context);
   }
 }
 

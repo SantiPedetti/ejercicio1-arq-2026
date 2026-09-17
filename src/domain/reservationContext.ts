@@ -30,15 +30,34 @@ export interface ReservationContext {
   metadata: Record<string, unknown>;
 }
 
-export function createContext(request: ReservationRequest | ReservationInput): ReservationContext {
-  const id = request.id || randomUUID();
+export function createNeutralPricing(baseFare: number): PriceBreakdown {
   return {
-    request: { ...request, id, reservationId: id },
-    status: 'PENDING',
-    aborted: false,
-    issues: [],
-    trace: [],
-    metadata: {}
+    flightBasePriceUsd: baseFare, classAdjustedPriceUsd: baseFare,
+    loyaltyDiscountUsd: 0, passengerTypeDiscountUsd: 0,
+    netPriceUsd: baseFare, taxesUsd: 0, airportFeeUsd: 0,
+    fuelSurchargeUsd: 0, totalUsd: baseFare,
+    baseFare, classPrice: baseFare, currentPrice: baseFare,
+    loyaltyDiscount: 0, passengerTypeDiscount: 0,
+    subtotal: baseFare, taxes: 0, airportFee: 0, fuelSurcharge: 0, total: baseFare
+  };
+}
+
+export interface ContextOptions {
+  passenger?: Passenger;
+  flight?: Flight;
+  pricing?: PriceBreakdown;
+}
+
+function resolveInitialPricing(options?: ContextOptions): PriceBreakdown | undefined {
+  return options?.pricing ?? (options?.flight ? createNeutralPricing(options.flight.baseFare) : undefined);
+}
+
+export function createContext(req: ReservationRequest | ReservationInput, opts?: ContextOptions): ReservationContext {
+  const id = req.id || randomUUID();
+  return {
+    request: { ...req, id, reservationId: id }, status: 'PENDING', aborted: false,
+    passenger: opts?.passenger, flight: opts?.flight, pricing: resolveInitialPricing(opts),
+    issues: [], trace: [], metadata: {}
   };
 }
 
@@ -46,10 +65,11 @@ export function addError(
   context: ReservationContext,
   filter: string,
   code: string,
-  message: string
+  message: string,
+  details?: unknown
 ): ReservationContext {
-  context.issues.push({ filter, code, message, severity: 'error' });
-  return context;
+  const issue: ProcessingIssue = { filter, code, message, severity: 'error', ...(details !== undefined ? { details } : {}) };
+  return { ...context, issues: [...context.issues, issue] };
 }
 
 /**
@@ -60,22 +80,22 @@ export function rejectReservation(
   context: ReservationContext,
   filter: string,
   code: string,
-  message: string
+  message: string,
+  details?: unknown
 ): ReservationContext {
-  addError(context, filter, code, message);
-  context.status = 'REJECTED';
-  context.aborted = true;
-  return context;
+  const issue: ProcessingIssue = { filter, code, message, severity: 'error', ...(details !== undefined ? { details } : {}) };
+  return { ...context, status: 'REJECTED', aborted: true, issues: [...context.issues, issue] };
 }
 
 export function addWarning(
   context: ReservationContext,
   filter: string,
   code: string,
-  message: string
+  message: string,
+  details?: unknown
 ): ReservationContext {
-  context.issues.push({ filter, code, message, severity: 'warning' });
-  return context;
+  const issue: ProcessingIssue = { filter, code, message, severity: 'warning', ...(details !== undefined ? { details } : {}) };
+  return { ...context, issues: [...context.issues, issue] };
 }
 
 export function hasErrors(context: ReservationContext): boolean {

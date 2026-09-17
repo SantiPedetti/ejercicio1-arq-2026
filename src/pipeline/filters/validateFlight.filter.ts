@@ -76,6 +76,7 @@ function validateFlightDetails(context: ReservationContext, flight: Flight, now:
 
 class ValidateFlightFilter implements Filter {
   readonly name = FILTER;
+  readonly critical = true;
 
   constructor(
     private readonly flights: FilterDependencies['flights'],
@@ -85,9 +86,10 @@ class ValidateFlightFilter implements Filter {
   execute(context: ReservationContext): ReservationContext {
     const flight = this.flights.findByCode(context.request.flightCode);
     const notFound = checkFlightFound(context, flight);
-    if (notFound || !flight) return context;
-    context.flight = flight;
-    return validateFlightDetails(context, flight, this.now) ?? context;
+    if (notFound) return notFound;
+    if (!flight) return context;
+    const withFlight = { ...context, flight };
+    return validateFlightDetails(withFlight, flight, this.now) ?? withFlight;
   }
 }
 

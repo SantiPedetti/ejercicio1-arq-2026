@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { FilterName } from '../config/pipelineConfig';
 import {
   addError,
+  addWarning,
   createContext,
   hasErrors,
   ReservationContext
 } from '../domain/reservationContext';
 import { ReservationInput, ReservationRequest } from '../domain/types';
 import { Logger, silentLogger } from '../support/logger';
+import { validateContextInvariants } from './context-guard';
 import { Filter } from './filter';
 
 export interface PipelineOptions {
@@ -50,8 +52,7 @@ export class Pipeline {
 
   async process(context: ReservationContext, correlationId?: string): Promise<ReservationContext> {
     const cid = correlationId ?? randomUUID();
-    context.status = 'PROCESSING';
-    let current = context;
+    let current: ReservationContext = { ...context, status: 'PROCESSING' };
     for (const filter of this.filters) {
       current = await this.runStep(current, filter, cid);
     }
@@ -63,36 +64,52 @@ export class Pipeline {
     filter: Filter,
     cid: string
   ): Promise<ReservationContext> {
-    if (this.enabledFilters[filter.name] === false) {
-      return this.recordSkip(ctx, filter, cid, 'disabled');
+    if (ctx.status === 'REJECTED' || ctx.status === 'FAILED') {
+      return this.recordNotRun(ctx, filter, cid);
     }
-    if (ctx.aborted && filter.runOnAborted !== true) {
-      return this.recordSkip(ctx, filter, cid, 'skipped', 'La reserva fue rechazada por un filtro anterior');
+    if (this.enabledFilters[filter.name] === false) {
+      return this.recordSkip(ctx, filter, cid);
     }
     return this.executeFilter(ctx, filter, cid);
   }
 
-  private recordSkip(
-    ctx: ReservationContext,
-    f: Filter,
-    cid: string,
-    status: 'disabled' | 'skipped',
-    detail?: string
-  ): ReservationContext {
-    ctx.trace.push({ filter: f.name, status, durationMs: 0, ...(detail ? { detail } : {}) });
-    this.logStep(reqId(ctx.request), cid, f.name, status, 0);
-    return ctx;
+  private recordSkip(ctx: ReservationContext, f: Filter, cid: string): ReservationContext {
+    const next: ReservationContext = {
+      ...ctx,
+      trace: [...ctx.trace, { filter: f.name, status: 'SKIPPED', durationMs: 0 }]
+    };
+    this.logStep(reqId(ctx.request), cid, f.name, 'SKIPPED', 0);
+    return next;
+  }
+
+  private recordNotRun(ctx: ReservationContext, f: Filter, cid: string): ReservationContext {
+    const next: ReservationContext = {
+      ...ctx,
+      trace: [...ctx.trace, { filter: f.name, status: 'NOT_RUN', durationMs: 0 }]
+    };
+    this.logStep(reqId(ctx.request), cid, f.name, 'NOT_RUN', 0);
+    return next;
   }
 
   private recordSuccess(
     next: ReservationContext,
-    filterName: FilterName,
+    name: FilterName,
     cid: string,
     durationMs: number
   ): ReservationContext {
-    next.trace.push({ filter: filterName, status: 'executed', durationMs });
-    this.logStep(reqId(next.request), cid, filterName, 'executed', durationMs);
-    return next;
+    const res: ReservationContext = {
+      ...next,
+      trace: [...next.trace, { filter: name, status: 'COMPLETED', durationMs }]
+    };
+    this.logStep(reqId(next.request), cid, name, 'COMPLETED', durationMs);
+    return res;
+  }
+
+  private checkFilterResult(ctx: ReservationContext, f: Filter, cid: string, durationMs: number): ReservationContext {
+    const guardError = validateContextInvariants(ctx, f.name);
+    if (guardError) return this.handleGuardFailure(ctx, f, cid, guardError, durationMs);
+    if (hasErrors(ctx)) return this.handleRejection(ctx, f, cid, durationMs);
+    return this.recordSuccess(ctx, f.name, cid, durationMs);
   }
 
   private async executeFilter(
@@ -103,21 +120,37 @@ export class Pipeline {
     const start = performance.now();
     try {
       const next = await f.execute(ctx);
-      return this.recordSuccess(next, f.name, cid, round(performance.now() - start));
+      return this.checkFilterResult(next, f, cid, round(performance.now() - start));
     } catch (err) {
       return this.handleFilterError(ctx, f, cid, err, round(performance.now() - start));
     }
   }
 
-  private logFilterFailure(
-    reservationId: string,
-    correlationId: string,
-    filter: FilterName,
-    durationMs: number,
-    error: string
-  ): void {
-    const meta = { pipeline: 'flight-reservation', reservationId, correlationId, filter, status: 'failed', durationMs, error };
-    this.logger.error('Excepcion no controlada en un filtro del pipeline', meta);
+  private handleGuardFailure(
+    ctx: ReservationContext, f: Filter, cid: string, err: string, durationMs: number
+  ): ReservationContext {
+    const withErr = addError(ctx, f.name, 'DATA_CORRUPTED', `Montos corruptos: ${err}`);
+    this.logFilterFailure(reqId(ctx.request), cid, f.name, durationMs, err);
+    return {
+      ...withErr, status: 'FAILED', aborted: true,
+      trace: [...withErr.trace, { filter: f.name, status: 'FAILED', durationMs, detail: err }]
+    };
+  }
+
+  private handleRejection(
+    ctx: ReservationContext,
+    f: Filter,
+    cid: string,
+    durationMs: number
+  ): ReservationContext {
+    const rejected: ReservationContext = {
+      ...ctx,
+      status: 'REJECTED',
+      aborted: true,
+      trace: [...ctx.trace, { filter: f.name, status: 'COMPLETED', durationMs }]
+    };
+    this.logStep(reqId(rejected.request), cid, f.name, 'COMPLETED', durationMs);
+    return rejected;
   }
 
   private handleFilterError(
@@ -128,12 +161,43 @@ export class Pipeline {
     durationMs: number
   ): ReservationContext {
     const msg = err instanceof Error ? err.message : String(err);
-    addError(ctx, f.name, 'FILTER_EXCEPTION', `El filtro fallo de forma inesperada: ${msg}`);
-    ctx.status = 'FAILED';
-    ctx.aborted = true;
-    ctx.trace.push({ filter: f.name, status: 'failed', durationMs, detail: msg });
+    if (f.critical) return this.handleCriticalError(ctx, f, cid, msg, durationMs);
+    return this.handleNonCriticalError(ctx, f, cid, msg, durationMs);
+  }
+
+  private handleCriticalError(
+    ctx: ReservationContext, f: Filter, cid: string, msg: string, durationMs: number
+  ): ReservationContext {
+    const withErr = addError(ctx, f.name, 'FILTER_EXCEPTION', `El filtro fallo de forma inesperada: ${msg}`);
     this.logFilterFailure(reqId(ctx.request), cid, f.name, durationMs, msg);
-    return ctx;
+    return {
+      ...withErr, status: 'FAILED', aborted: true,
+      trace: [...withErr.trace, { filter: f.name, status: 'FAILED', durationMs, detail: msg }]
+    };
+  }
+
+  private handleNonCriticalError(
+    ctx: ReservationContext,
+    f: Filter,
+    cid: string,
+    msg: string,
+    durationMs: number
+  ): ReservationContext {
+    const withWarn = addWarning(ctx, f.name, 'FILTER_EXCEPTION', `El filtro fallo de forma inesperada: ${msg}`);
+    const meta = { pipeline: 'flight-reservation', reservationId: reqId(ctx.request), correlationId: cid, filter: f.name, status: 'FAILED', durationMs, error: msg };
+    this.logger.warn('Filtro no critico fallo de forma inesperada', meta);
+    return { ...withWarn, trace: [...withWarn.trace, { filter: f.name, status: 'FAILED', durationMs, detail: msg }] };
+  }
+
+  private logFilterFailure(
+    reservationId: string,
+    correlationId: string,
+    filter: FilterName,
+    durationMs: number,
+    error: string
+  ): void {
+    const meta = { pipeline: 'flight-reservation', reservationId, correlationId, filter, status: 'FAILED', durationMs, error };
+    this.logger.error('Excepcion no controlada en un filtro del pipeline', meta);
   }
 
   private logStep(
@@ -172,11 +236,9 @@ export class Pipeline {
 function finalizeStatus(context: ReservationContext): ReservationContext {
   if (context.status === 'REJECTED' || context.status === 'FAILED') return context;
   if (hasErrors(context)) {
-    context.status = 'REJECTED';
-    return context;
+    return { ...context, status: 'REJECTED' };
   }
-  context.status = 'CONFIRMED';
-  return context;
+  return { ...context, status: 'CONFIRMED' };
 }
 
 function summarize(contexts: ReservationContext[]): BatchSummary {

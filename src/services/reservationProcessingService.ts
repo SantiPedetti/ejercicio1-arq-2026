@@ -6,7 +6,7 @@ import {
   PipelineConfigPatch,
   PipelineConfigStore
 } from '../config/pipelineConfig';
-import { createContext } from '../domain/reservationContext';
+import { createContext, ReservationContext } from '../domain/reservationContext';
 import { ReservationRequest } from '../domain/types';
 import { FilterDependencies } from '../pipeline/filter';
 import { BatchSummary, Pipeline } from '../pipeline/pipeline';
@@ -101,8 +101,11 @@ export class ReservationProcessingService {
   }
 
   private resolveConfig(overrides?: PipelineConfigPatch): PipelineConfig {
-    if (!overrides) return this.configStore.get();
-    return new PipelineConfigStore(this.configStore.get()).update(overrides);
+    const snapshot = this.configStore.get();
+    if (!overrides) return snapshot;
+    const clean: PipelineConfigPatch = { ...overrides };
+    delete (clean as { exchangeRate?: unknown }).exchangeRate;
+    return new PipelineConfigStore(snapshot).update(clean);
   }
 
   private buildFilterDeps(config: PipelineConfig): FilterDependencies {
@@ -125,6 +128,12 @@ export class ReservationProcessingService {
     });
   }
 
+  private buildInitialContext(req: ReservationRequest): ReservationContext {
+    const passenger = this.passengers.findById(req.passengerId);
+    const flight = this.flights.findByCode(req.flightCode);
+    return createContext(req, { passenger, flight });
+  }
+
   private async processItem(raw: unknown, pipeline: Pipeline, cid?: string): Promise<ReservationResult> {
     const id = extractId(raw);
     this.store.saveStatus({ reservationId: id, status: 'PROCESSING', updatedAt: this.now().toISOString() });
@@ -134,8 +143,8 @@ export class ReservationProcessingService {
       this.store.saveResult(res, this.now().toISOString());
       return res;
     }
-    const req: ReservationRequest = { ...parsed.data, id, reservationId: id };
-    const ctx = await pipeline.process(createContext(req), cid);
+    const initCtx = this.buildInitialContext({ ...parsed.data, id, reservationId: id });
+    const ctx = await pipeline.process(initCtx, cid);
     const result = toReservationResult(ctx, this.now());
     this.store.saveResult(result, this.now().toISOString());
     return result;

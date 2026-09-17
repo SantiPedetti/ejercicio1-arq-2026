@@ -104,6 +104,8 @@
 
 ## F4 — Precio (PLAN §4, Q2)
 
+- **Pendiente de la revisión de F3:** `PriceBreakdown` todavía tiene alias heredados (`flightBasePriceUsd`, `classAdjustedPriceUsd`, `netPriceUsd`, etc.) junto a los nombres del PLAN. Hay que dejar solo `baseFare`, `classPrice`, `currentPrice`, `loyaltyDiscount`, `passengerTypeDiscount`, `subtotal`, `taxes`, `fuelSurcharge`, `airportFee` y `total`.
+
 - **Pendiente de la revisión de F2:** quitar el `it.skip` de los tests de totales en `tests/filters/pricing.filters.test.ts`. El de P004 debe esperar 3740.20, y hay que agregar el de P009 = 3397.48.
 
 - **Filtro 4:** `classPrice = baseFare × multiplicador`; `currentPrice = classPrice`.

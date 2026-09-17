@@ -6,54 +6,62 @@ import { Filter, FilterDependencies, FilterFactory } from '../filter';
 
 const FILTER = 'exchangeRateEnrichment' as const;
 
-function handleUnmappedCountry(context: ReservationContext, code: string): string {
-  addWarning(
+function handleUnmappedCountry(context: ReservationContext, code: string): { context: ReservationContext; target: string } {
+  const updated = addWarning(
     context,
     FILTER,
     'UNKNOWN_DESTINATION_CURRENCY',
     `No hay moneda mapeada para el pais ${code}; se mantiene ${UNKNOWN_COUNTRY_FALLBACK_CURRENCY}`
   );
-  return UNKNOWN_COUNTRY_FALLBACK_CURRENCY;
+  return { context: updated, target: UNKNOWN_COUNTRY_FALLBACK_CURRENCY };
 }
 
-function resolveTargetCurrency(context: ReservationContext): string | undefined {
+function resolveTargetCurrency(context: ReservationContext): { context: ReservationContext; target?: string } {
   if (!context.flight) {
-    addWarning(context, FILTER, 'FLIGHT_NOT_RESOLVED', 'No hay vuelo resuelto en el contexto, no se puede determinar la moneda de destino');
-    return undefined;
+    const updated = addWarning(context, FILTER, 'FLIGHT_NOT_RESOLVED', 'No hay vuelo resuelto en el contexto, no se puede determinar la moneda de destino');
+    return { context: updated };
   }
-  const code = context.flight.destinationCountryCode;
-  return currencyForCountry(code) ?? handleUnmappedCountry(context, code);
+  const code = context.flight.destinationCountry;
+  const target = currencyForCountry(code);
+  return target ? { context, target } : handleUnmappedCountry(context, code);
 }
 
-function checkFallbackWarning(context: ReservationContext, result: ExchangeRateResult): void {
+function checkFallbackWarning(context: ReservationContext, result: ExchangeRateResult): ReservationContext {
   if (result.source === 'fallback') {
-    addWarning(
+    return addWarning(
       context,
       FILTER,
       'EXCHANGE_RATE_FALLBACK',
       `Se aplico la tasa de respaldo configurada para ${result.targetCurrency} porque la API externa no respondio`
     );
   }
+  return context;
 }
 
-function applyRateResult(context: ReservationContext, result: ExchangeRateResult): void {
-  context.currency = {
-    baseCurrency: result.baseCurrency,
-    targetCurrency: result.targetCurrency,
-    rate: result.rate,
-    rateSource: result.source,
-    retrievedAt: result.retrievedAt
+function applyRateResult(context: ReservationContext, result: ExchangeRateResult): ReservationContext {
+  const withCurrency: ReservationContext = {
+    ...context,
+    currency: {
+      baseCurrency: result.baseCurrency,
+      targetCurrency: result.targetCurrency,
+      rate: result.rate,
+      rateSource: result.source,
+      retrievedAt: result.retrievedAt
+    }
   };
-  checkFallbackWarning(context, result);
+  return checkFallbackWarning(withCurrency, result);
 }
 
-function setIdentityCurrency(context: ReservationContext, base: string): void {
-  context.currency = {
-    baseCurrency: base,
-    targetCurrency: base,
-    rate: 1,
-    rateSource: 'identity',
-    retrievedAt: new Date().toISOString()
+function setIdentityCurrency(context: ReservationContext, base: string): ReservationContext {
+  return {
+    ...context,
+    currency: {
+      baseCurrency: base,
+      targetCurrency: base,
+      rate: 1,
+      rateSource: 'identity',
+      retrievedAt: new Date().toISOString()
+    }
   };
 }
 
@@ -71,30 +79,30 @@ function handleRateError(
   base: string,
   error: unknown,
   logger: Logger
-): void {
+): ReservationContext {
   const msg = error instanceof Error ? error.message : String(error);
   const id = context.request.id || context.request.reservationId || '';
   logEnrichmentWarning(logger, id, target, msg);
-  addWarning(context, FILTER, 'EXCHANGE_RATE_UNAVAILABLE', `No se pudo obtener la tasa de cambio (${msg}); la reserva continua en ${base}`);
-  setIdentityCurrency(context, base);
+  const withWarn = addWarning(context, FILTER, 'EXCHANGE_RATE_UNAVAILABLE', `No se pudo obtener la tasa de cambio (${msg}); la reserva continua en ${base}`);
+  return setIdentityCurrency(withWarn, base);
 }
 
 class ExchangeRateEnrichmentFilter implements Filter {
   readonly name = FILTER;
+  readonly critical = false;
 
   constructor(private readonly deps: FilterDependencies) {}
 
   async execute(context: ReservationContext): Promise<ReservationContext> {
-    const target = resolveTargetCurrency(context);
-    if (!target) return context;
+    const { context: ctx, target } = resolveTargetCurrency(context);
+    if (!target) return ctx;
     const base = this.deps.config.exchangeRate.baseCurrency.toUpperCase();
     try {
       const result = await this.deps.exchangeRates.getRate(target);
-      applyRateResult(context, result);
+      return applyRateResult(ctx, result);
     } catch (error) {
-      handleRateError(context, target, base, error, this.deps.logger);
+      return handleRateError(ctx, target, base, error, this.deps.logger);
     }
-    return context;
   }
 }
 

@@ -35,8 +35,6 @@ export interface TaxSettings {
 }
 
 export interface PipelineConfig {
-  /** Orden de ejecucion de los filtros; define la topologia del pipeline. */
-  filterOrder: FilterName[];
   enabledFilters: Record<FilterName, boolean>;
   seatClassMultipliers: Record<SeatClass, number>;
   loyaltyDiscounts: Record<LoyaltyTier, number>;
@@ -46,7 +44,6 @@ export interface PipelineConfig {
 }
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
-  filterOrder: [...FILTER_NAMES],
   enabledFilters: {
     validatePassenger: true,
     validateFlight: true,
@@ -106,7 +103,6 @@ function clone<T>(value: T): T {
 }
 
 export type PipelineConfigPatch = {
-  filterOrder?: FilterName[];
   enabledFilters?: Partial<Record<FilterName, boolean>>;
   seatClassMultipliers?: Partial<Record<SeatClass, number>>;
   loyaltyDiscounts?: Partial<Record<LoyaltyTier, number>>;
@@ -132,10 +128,10 @@ function mergeExchangeRate(
  * en lugar de constantes embebidas en los filtros.
  */
 export class PipelineConfigStore {
-  private config: PipelineConfig;
+  private config: Readonly<PipelineConfig>;
 
   constructor(initial: PipelineConfig = DEFAULT_PIPELINE_CONFIG) {
-    this.config = clone(initial);
+    this.config = Object.freeze(clone(initial));
   }
 
   get(): PipelineConfig {
@@ -145,8 +141,7 @@ export class PipelineConfigStore {
   /** Aplica un parche parcial y devuelve la configuracion resultante. */
   update(patch: PipelineConfigPatch): PipelineConfig {
     const cur = this.config;
-    this.config = {
-      filterOrder: patch.filterOrder ? [...patch.filterOrder] : cur.filterOrder,
+    const updated: PipelineConfig = {
       enabledFilters: { ...cur.enabledFilters, ...patch.enabledFilters },
       seatClassMultipliers: { ...cur.seatClassMultipliers, ...patch.seatClassMultipliers },
       loyaltyDiscounts: { ...cur.loyaltyDiscounts, ...patch.loyaltyDiscounts },
@@ -154,11 +149,12 @@ export class PipelineConfigStore {
       taxes: { ...cur.taxes, ...patch.taxes },
       exchangeRate: mergeExchangeRate(cur.exchangeRate, patch.exchangeRate)
     };
+    this.config = Object.freeze(clone(updated));
     return this.get();
   }
 
   reset(): PipelineConfig {
-    this.config = clone(DEFAULT_PIPELINE_CONFIG);
+    this.config = Object.freeze(clone(DEFAULT_PIPELINE_CONFIG));
     return this.get();
   }
 }

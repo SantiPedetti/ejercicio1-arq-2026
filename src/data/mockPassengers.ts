@@ -17,8 +17,9 @@ const PASSENGER_DATA: readonly PassengerTuple[] = [
 ];
 
 function toPassenger(now: Date, [id, name, email, age, country, loyaltyTier, isActive]: PassengerTuple): Passenger {
-  const birthDate = `${now.getUTCFullYear() - age}-05-15`;
-  return { id, name, email, birthDate, country, countryCode: country, loyaltyTier, isActive };
+  const d = new Date(Date.UTC(now.getUTCFullYear() - age, now.getUTCMonth(), now.getUTCDate() - 1));
+  const birthDate = d.toISOString().slice(0, 10);
+  return { id, name, email, birthDate, country, loyaltyTier, isActive };
 }
 
 export function buildMockPassengers(now: Date = new Date()): Passenger[] {

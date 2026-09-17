@@ -12,9 +12,6 @@ export interface Passenger {
   country: string;
   loyaltyTier: LoyaltyTier;
   isActive: boolean;
-  countryCode?: string;
-  firstName?: string;
-  lastName?: string;
 }
 
 export interface Flight {
@@ -24,12 +21,9 @@ export interface Flight {
   destination: string;
   originCountry: string;
   destinationCountry: string;
-  destinationCountryCode: string;
   departureAt: string;
-  departureDate: string;
   durationMinutes: number;
   baseFare: number;
-  basePriceUsd: number;
   availableSeats: number;
   airline?: string;
 }
@@ -53,18 +47,25 @@ export interface ReservationRequest extends ReservationInput {
 }
 
 export interface PriceBreakdown {
-  /** Precio base del vuelo publicado por la aerolinea, en USD. */
-  flightBasePriceUsd: number;
-  /** Precio luego de aplicar el multiplicador de clase de asiento. */
-  classAdjustedPriceUsd: number;
-  loyaltyDiscountUsd: number;
-  passengerTypeDiscountUsd: number;
-  /** Precio neto luego de descuentos y antes de impuestos. */
-  netPriceUsd: number;
-  taxesUsd: number;
-  airportFeeUsd: number;
-  fuelSurchargeUsd: number;
-  totalUsd: number;
+  baseFare?: number;
+  classPrice?: number;
+  currentPrice?: number;
+  loyaltyDiscount?: number;
+  passengerTypeDiscount?: number;
+  subtotal?: number;
+  taxes?: number;
+  fuelSurcharge?: number;
+  airportFee?: number;
+  total?: number;
+  flightBasePriceUsd?: number;
+  classAdjustedPriceUsd?: number;
+  loyaltyDiscountUsd?: number;
+  passengerTypeDiscountUsd?: number;
+  netPriceUsd?: number;
+  taxesUsd?: number;
+  airportFeeUsd?: number;
+  fuelSurchargeUsd?: number;
+  totalUsd?: number;
 }
 
 export type RateSource = 'api' | 'cache' | 'fallback' | 'identity';
@@ -88,9 +89,11 @@ export interface ProcessingIssue {
   details?: unknown;
 }
 
+export type FilterTraceStatus = 'COMPLETED' | 'SKIPPED' | 'FAILED' | 'NOT_RUN';
+
 export interface FilterTrace {
   filter: string;
-  status: 'executed' | 'skipped' | 'disabled' | 'failed';
+  status: FilterTraceStatus;
   durationMs: number;
   detail?: string;
 }
