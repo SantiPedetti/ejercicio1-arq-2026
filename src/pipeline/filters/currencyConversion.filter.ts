@@ -1,25 +1,23 @@
-import { addWarning, rejectReservation, ReservationContext } from '../../domain/reservationContext';
+import { ReservationContext } from '../../domain/reservationContext';
 import { Filter, FilterFactory } from '../filter';
 
 const FILTER = 'currencyConversion' as const;
 
-function warnMissingCurrency(context: ReservationContext): ReservationContext {
-  return addWarning(
-    context,
-    FILTER,
-    'CURRENCY_METADATA_MISSING',
-    'No hay metadata de tipo de cambio en el contexto; el total se mantiene en USD'
-  );
+function computeLocalAmounts(pricing: ReservationContext['pricing'], rate: number) {
+  if (!pricing) return undefined;
+  const total = pricing.total ?? pricing.currentPrice;
+  if (typeof pricing.baseFare !== 'number' || typeof total !== 'number') return undefined;
+  return { baseFareLocal: pricing.baseFare * rate, totalLocal: total * rate };
 }
 
-function applyConversion(context: ReservationContext): ReservationContext {
-  if (!context.pricing || !context.currency) return context;
-  const total = context.pricing.total ?? context.pricing.currentPrice ?? 0;
-  const convertedTotal = total * context.currency.rate;
+function calculateConversion(context: ReservationContext): ReservationContext {
+  if (!context.exchangeRate || !context.pricing) return context;
+  const amounts = computeLocalAmounts(context.pricing, context.exchangeRate.rate);
+  if (!amounts) return context;
   return {
     ...context,
-    currency: { ...context.currency, convertedTotal },
-    metadata: { ...context.metadata, convertedCurrency: context.currency.targetCurrency }
+    conversion: amounts,
+    ...(context.currency ? { currency: { ...context.currency, convertedTotal: amounts.totalLocal } } : {})
   };
 }
 
@@ -28,13 +26,7 @@ class CurrencyConversionFilter implements Filter {
   readonly critical = false;
 
   execute(context: ReservationContext): ReservationContext {
-    if (!context.pricing) {
-      return rejectReservation(context, FILTER, 'MISSING_DATA', 'No hay desglose de precios para convertir');
-    }
-    if (!context.currency) {
-      return warnMissingCurrency(context);
-    }
-    return applyConversion(context);
+    return calculateConversion(context);
   }
 }
 

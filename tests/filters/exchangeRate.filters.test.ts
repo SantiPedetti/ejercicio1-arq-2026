@@ -1,6 +1,7 @@
 import { createContext } from '../../src/domain/reservationContext';
 import { createCurrencyConversionFilter } from '../../src/pipeline/filters/currencyConversion.filter';
 import { createExchangeRateEnrichmentFilter } from '../../src/pipeline/filters/exchangeRateEnrichment.filter';
+import { toReservationResult } from '../../src/services/reservationResult';
 import {
   contextFor,
   failingRateProvider,
@@ -17,116 +18,160 @@ function contextWithFlight(flightCode: string) {
   return context;
 }
 
-describe('filtro de enriquecimiento con tipo de cambio', () => {
-  it('detecta la moneda del pais de destino y guarda la tasa en el contexto', async () => {
-    const filter = createExchangeRateEnrichmentFilter(
-      testDeps({ exchangeRates: stubRateProvider({ rate: 5.1 }) })
+describe('filtros 3 (exchangeRateEnrichment) y 8 (currencyConversion)', () => {
+  const filter8 = createCurrencyConversionFilter(testDeps());
+
+  it('tasa ok: enriquece con la tasa obtenida y el filtro 8 convierte los montos sin redondear', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(
+      testDeps({ exchangeRates: stubRateProvider({ rate: 5.1234, source: 'api' }) })
     );
 
-    const context = await filter.execute(contextWithFlight('LA4567'));
-
-    expect(context.currency).toMatchObject({
-      baseCurrency: 'USD',
-      targetCurrency: 'BRL',
-      rate: 5.1,
-      rateSource: 'api'
-    });
-    expect(context.issues).toHaveLength(0);
-  });
-
-  it('avisa con un warning cuando la tasa proviene del respaldo configurado', async () => {
-    const filter = createExchangeRateEnrichmentFilter(
-      testDeps({ exchangeRates: stubRateProvider({ source: 'fallback', rate: 1000 }) })
-    );
-
-    const context = await filter.execute(contextWithFlight('AF0010'));
-
-    expect(issueCodes(context)).toEqual(['EXCHANGE_RATE_FALLBACK']);
-    expect(context.currency?.rateSource).toBe('fallback');
-  });
-
-  it('continua en USD con un warning si la integracion falla por completo', async () => {
-    const filter = createExchangeRateEnrichmentFilter(
-      testDeps({ exchangeRates: failingRateProvider('timeout de 5000 ms') })
-    );
-
-    const context = await filter.execute(contextWithFlight('LA4567'));
-
-    expect(context.status).toBe('PENDING');
-    expect(context.aborted).toBe(false);
-    expect(issueCodes(context)).toEqual(['EXCHANGE_RATE_UNAVAILABLE']);
-    expect(context.currency).toMatchObject({ targetCurrency: 'USD', rate: 1, rateSource: 'identity' });
-  });
-
-  it('advierte cuando no hay vuelo resuelto en el contexto', async () => {
-    const filter = createExchangeRateEnrichmentFilter(testDeps());
-
-    const context = await filter.execute(contextFor());
-
-    expect(issueCodes(context)).toEqual(['FLIGHT_NOT_RESOLVED']);
-    expect(context.currency).toBeUndefined();
-  });
-
-  it('no convierte cuando el destino usa la misma moneda base', async () => {
-    const filter = createExchangeRateEnrichmentFilter(
-      testDeps({ exchangeRates: stubRateProvider({ rate: 1, source: 'identity' }) })
-    );
-
-    const context = await filter.execute(contextWithFlight('AA0002'));
-
-    expect(context.currency).toMatchObject({ targetCurrency: 'USD', rate: 1 });
-    expect(context.issues).toHaveLength(0);
-  });
-});
-
-describe('filtro de conversion de moneda', () => {
-  const filter = createCurrencyConversionFilter(testDeps());
-
-  it('aplica la tasa obtenida sobre el total final', async () => {
     const context = contextWithFlight('LA4567');
     context.pricing = {
-      baseFare: 180,
-      classPrice: 180,
-      currentPrice: 180,
-      loyaltyDiscount: 0,
-      passengerTypeDiscount: 0,
-      subtotal: 180,
-      taxes: 21.6,
+      baseFare: 180.456,
+      classPrice: 180.456,
+      currentPrice: 180.456,
+      subtotal: 180.456,
+      taxes: 21.65,
+      fuelSurcharge: 14.43,
       airportFee: 25,
-      fuelSurcharge: 14.4,
-      total: 241
-    };
-    context.currency = {
-      baseCurrency: 'USD',
-      targetCurrency: 'BRL',
-      rate: 5.2,
-      rateSource: 'api',
-      retrievedAt: '2026-01-01T00:00:00.000Z'
+      total: 241.536
     };
 
-    const result = await filter.execute(context);
+    const enriched = await filter3.execute(context);
 
-    expect(result.currency?.convertedTotal).toBe(1253.2);
-    expect(result.metadata.convertedCurrency).toBe('BRL');
+    expect(enriched.exchangeRate).toMatchObject({
+      currency: 'BRL',
+      rate: 5.1234,
+      source: 'api'
+    });
+    expect(issueCodes(enriched)).toHaveLength(0);
+
+    const converted = await filter8.execute(enriched);
+
+    expect(converted.conversion?.baseFareLocal).toBeCloseTo(180.456 * 5.1234, 4);
+    expect(converted.conversion?.totalLocal).toBeCloseTo(241.536 * 5.1234, 4);
   });
 
-  it('mantiene el total en USD con un warning si falta la metadata de moneda', async () => {
+  it('tasa vencida con STALE_RATE: emite warning y convierte montos', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(
+      testDeps({ exchangeRates: stubRateProvider({ rate: 5.2, source: 'stale-cache' }) })
+    );
+
     const context = contextWithFlight('LA4567');
     context.pricing = {
-      baseFare: 180,
-      classPrice: 180,
-      currentPrice: 180,
-      loyaltyDiscount: 0,
-      passengerTypeDiscount: 0,
-      subtotal: 180,
-      taxes: 0,
-      airportFee: 0,
-      fuelSurcharge: 0,
-      total: 180
+      baseFare: 200,
+      classPrice: 200,
+      currentPrice: 200,
+      total: 249
     };
 
-    const result = await filter.execute(context);
+    const enriched = await filter3.execute(context);
 
-    expect(issueCodes(result)).toEqual(['CURRENCY_METADATA_MISSING']);
+    expect(enriched.exchangeRate).toMatchObject({
+      currency: 'BRL',
+      rate: 5.2,
+      source: 'stale-cache'
+    });
+    expect(issueCodes(enriched)).toContain('STALE_RATE');
+
+    const converted = await filter8.execute(enriched);
+    expect(converted.conversion?.baseFareLocal).toBeCloseTo(1040, 2);
+    expect(converted.conversion?.totalLocal).toBeCloseTo(1294.8, 2);
+  });
+
+  it('sin tasa con EXCHANGE_RATE_UNAVAILABLE y conversion null', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(
+      testDeps({ exchangeRates: failingRateProvider('API caída') })
+    );
+
+    const context = contextWithFlight('LA4567');
+    context.pricing = {
+      baseFare: 200,
+      classPrice: 200,
+      currentPrice: 200,
+      total: 249
+    };
+
+    const enriched = await filter3.execute(context);
+
+    expect(enriched.exchangeRate).toBeUndefined();
+    expect(issueCodes(enriched)).toContain('EXCHANGE_RATE_UNAVAILABLE');
+
+    const converted = await filter8.execute(enriched);
+    expect(converted.conversion).toBeUndefined();
+
+    const output = toReservationResult(converted);
+    expect(output.conversion).toBeNull();
+  });
+
+  it('UNKNOWN_CURRENCY cuando el pais de destino no tiene moneda mapeada', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(testDeps());
+    const context = contextWithFlight('LA4567');
+    if (context.flight) {
+      context.flight = { ...context.flight, destinationCountry: 'XX' };
+    }
+
+    const enriched = await filter3.execute(context);
+
+    expect(enriched.exchangeRate).toBeUndefined();
+    expect(issueCodes(enriched)).toContain('UNKNOWN_CURRENCY');
+
+    const converted = await filter8.execute(enriched);
+    const output = toReservationResult(converted);
+    expect(output.conversion).toBeNull();
+  });
+
+  it('UNKNOWN_CURRENCY cuando la moneda no esta en las tasas del proveedor', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(
+      testDeps({
+        exchangeRates: stubRateProvider({ rates: { EUR: 0.92 } })
+      })
+    );
+
+    const context = contextWithFlight('LA4567'); // destino BR -> BRL, no presente en rates
+    const enriched = await filter3.execute(context);
+
+    expect(enriched.exchangeRate).toBeUndefined();
+    expect(issueCodes(enriched)).toContain('UNKNOWN_CURRENCY');
+  });
+
+  it('sin vuelo emite warning EXCHANGE_RATE_SKIPPED_NO_FLIGHT', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(testDeps());
+    const context = contextFor();
+
+    const enriched = await filter3.execute(context);
+
+    expect(enriched.exchangeRate).toBeUndefined();
+    expect(issueCodes(enriched)).toEqual(['EXCHANGE_RATE_SKIPPED_NO_FLIGHT']);
+  });
+
+  it('filtro 8 deshabilitado omite campos locales en la salida final', async () => {
+    const filter3 = createExchangeRateEnrichmentFilter(
+      testDeps({ exchangeRates: stubRateProvider({ rate: 5.2, source: 'api' }) })
+    );
+
+    const context = contextWithFlight('LA4567');
+    context.pricing = {
+      baseFare: 200,
+      total: 249
+    };
+
+    const enriched = await filter3.execute(context);
+    expect(enriched.exchangeRate).toBeDefined();
+
+    // El filtro 8 esta deshabilitado, por lo que no se ejecuta y context.conversion queda undefined
+    const output = toReservationResult(enriched);
+
+    expect(output.conversion).toEqual({
+      currency: 'BRL',
+      rate: 5.2,
+      source: 'api',
+      fetchedAt: expect.any(String)
+    });
+    expect(output.conversion?.baseFareLocal).toBeUndefined();
+    expect(output.conversion?.totalLocal).toBeUndefined();
+    expect(output.conversion).not.toHaveProperty('baseFareLocal');
+    expect(output.conversion).not.toHaveProperty('totalLocal');
   });
 });

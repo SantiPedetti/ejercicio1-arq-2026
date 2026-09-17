@@ -1,6 +1,11 @@
 import { FilterName } from '../config/pipelineConfig';
 import { ReservationContext } from '../domain/reservationContext';
-import { CurrencyMetadata, PriceBreakdown } from '../domain/types';
+import {
+  CurrencyMetadata,
+  ExchangeRateData,
+  LocalConversionData,
+  PriceBreakdown
+} from '../domain/types';
 
 function checkNumber(key: string, val: number, allowZero = true): string | null {
   if (!Number.isFinite(val)) {
@@ -43,6 +48,32 @@ function checkCurrency(currency?: CurrencyMetadata): string | null {
   return null;
 }
 
+function checkExchangeRate(rate?: ExchangeRateData): string | null {
+  if (!rate) return null;
+  return checkNumber('exchangeRate.rate', rate.rate, false);
+}
+
+function checkConversion(conversion?: LocalConversionData): string | null {
+  if (!conversion) return null;
+  if (typeof conversion.baseFareLocal === 'number') {
+    const err = checkNumber('conversion.baseFareLocal', conversion.baseFareLocal);
+    if (err) return err;
+  }
+  if (typeof conversion.totalLocal === 'number') {
+    const err = checkNumber('conversion.totalLocal', conversion.totalLocal);
+    if (err) return err;
+  }
+  return null;
+}
+
+function checkCurrencyInvariants(context: ReservationContext): string | null {
+  const exErr = checkExchangeRate(context.exchangeRate);
+  if (exErr) return exErr;
+  const convErr = checkConversion(context.conversion);
+  if (convErr) return convErr;
+  return checkCurrency(context.currency);
+}
+
 export function validateContextInvariants(
   context: ReservationContext,
   filterName: FilterName
@@ -55,8 +86,5 @@ export function validateContextInvariants(
     if (bpErr) return bpErr;
   }
 
-  const currencyErr = checkCurrency(context.currency);
-  if (currencyErr) return currencyErr;
-
-  return null;
+  return checkCurrencyInvariants(context);
 }

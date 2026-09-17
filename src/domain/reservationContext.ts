@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import {
   CurrencyMetadata,
+  ExchangeRateData,
   FilterTrace,
   Flight,
+  LocalConversionData,
   Passenger,
   PriceBreakdown,
   ProcessingIssue,
@@ -24,6 +26,8 @@ export interface ReservationContext {
   passenger?: Passenger;
   flight?: Flight;
   pricing?: PriceBreakdown;
+  exchangeRate?: ExchangeRateData;
+  conversion?: LocalConversionData;
   currency?: CurrencyMetadata;
   issues: ProcessingIssue[];
   trace: FilterTrace[];

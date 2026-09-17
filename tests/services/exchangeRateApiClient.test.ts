@@ -3,169 +3,274 @@ import {
   ExchangeRateApiClient,
   FetchLike
 } from '../../src/services/exchangeRate/exchangeRateApiClient';
-import { ExchangeRateUnavailableError } from '../../src/services/exchangeRate/exchangeRateProvider';
-import { RatesCache } from '../../src/services/exchangeRate/ratesCache';
+import { ExchangeRateError } from '../../src/services/exchangeRate/exchangeRateProvider';
 
 function settings(overrides: Partial<ExchangeRateSettings> = {}): ExchangeRateSettings {
-  return { ...DEFAULT_PIPELINE_CONFIG.exchangeRate, timeoutMs: 50, retryDelayMs: 0, ...overrides };
+  return {
+    ...DEFAULT_PIPELINE_CONFIG.exchangeRate,
+    timeoutMs: 5000,
+    retryDelayMs: 200,
+    ...overrides
+  };
 }
 
-function okResponse(rates: Record<string, number>): Response {
-  return { ok: true, status: 200, json: async () => ({ base: 'USD', rates }) } as unknown as Response;
+function okResponse(rates: Record<string, number>, base = 'USD'): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ base, rates })
+  } as unknown as Response;
 }
 
-const noSleep = async (): Promise<void> => undefined;
+function errorResponse(status: number): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({})
+  } as unknown as Response;
+}
 
-describe('cliente de ExchangeRate-API', () => {
-  it('obtiene la tasa desde la API y la marca con origen api', async () => {
-    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue(
-      okResponse({ BRL: 5.35, ARS: 1450 })
-    );
-    const client = new ExchangeRateApiClient({ settings: settings(), fetchFn, sleep: noSleep });
-
-    const result = await client.getRate('BRL');
-
-    expect(result).toMatchObject({ baseCurrency: 'USD', targetCurrency: 'BRL', rate: 5.35, source: 'api' });
-    expect(fetchFn).toHaveBeenCalledWith('https://api.exchangerate-api.com/v4/latest/USD', expect.anything());
+describe('proveedor de tipo de cambio (ExchangeRateApiClient)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
   });
 
-  it('no vuelve a llamar a la API mientras la cache esta vigente', async () => {
-    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue(
-      okResponse({ BRL: 5.35, ARS: 1450 })
-    );
-    const client = new ExchangeRateApiClient({ settings: settings(), fetchFn, sleep: noSleep });
-
-    await client.getRate('BRL');
-    const second = await client.getRate('ARS');
-
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect(second.source).toBe('cache');
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
-  it('vuelve a consultar la API luego de invalidar la cache manualmente', async () => {
-    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue(
-      okResponse({ BRL: 5.35 })
-    );
-    const client = new ExchangeRateApiClient({ settings: settings(), fetchFn, sleep: noSleep });
-
-    await client.getRate('BRL');
-    client.invalidateCache();
-    await client.getRate('BRL');
-
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-  });
-
-  it('descarta la entrada cacheada cuando vence el TTL', async () => {
-    let clock = 0;
-    const cache = new RatesCache(1000, () => clock);
-    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue(
-      okResponse({ BRL: 5.35 })
-    );
-    const client = new ExchangeRateApiClient({
-      settings: settings({ cacheTtlMs: 1000 }),
-      fetchFn,
-      cache,
-      sleep: noSleep
-    });
-
-    await client.getRate('BRL');
-    clock = 1500;
-    await client.getRate('BRL');
-
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-  });
-
-  it('reintenta hasta el maximo configurado antes de darse por vencido', async () => {
-    const fetchFn = jest
-      .fn<Promise<Response>, Parameters<FetchLike>>()
-      .mockRejectedValueOnce(new Error('ECONNRESET'))
-      .mockRejectedValueOnce(new Error('ECONNRESET'))
-      .mockResolvedValue(okResponse({ BRL: 5.4 }));
-    const client = new ExchangeRateApiClient({
-      settings: settings({ maxRetries: 3 }),
-      fetchFn,
-      sleep: noSleep
-    });
-
-    const result = await client.getRate('BRL');
-
-    expect(fetchFn).toHaveBeenCalledTimes(3);
-    expect(result.source).toBe('api');
-  });
-
-  it('cae a la tasa de respaldo cuando se agotan los reintentos', async () => {
-    const fetchFn = jest
-      .fn<Promise<Response>, Parameters<FetchLike>>()
-      .mockRejectedValue(new Error('la API no responde'));
-    const client = new ExchangeRateApiClient({
-      settings: settings({ maxRetries: 3 }),
-      fetchFn,
-      sleep: noSleep
-    });
-
-    const result = await client.getRate('BRL');
-
-    expect(fetchFn).toHaveBeenCalledTimes(3);
-    expect(result).toMatchObject({ rate: 5.2, source: 'fallback' });
-  });
-
-  it('trata un estado HTTP de error como fallo de la integracion', async () => {
-    const fetchFn = jest
-      .fn<Promise<Response>, Parameters<FetchLike>>()
-      .mockResolvedValue({ ok: false, status: 503, json: async () => ({}) } as unknown as Response);
-    const client = new ExchangeRateApiClient({
-      settings: settings({ maxRetries: 2 }),
-      fetchFn,
-      sleep: noSleep
-    });
-
-    const result = await client.getRate('ARS');
-
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(result.source).toBe('fallback');
-  });
-
-  it('aborta la llamada cuando se excede el timeout y usa el respaldo', async () => {
+  it('aborta la llamada cuando se excede el timeout', async () => {
     const hangingFetch: FetchLike = (_url, init) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => {
-          const error = new Error('The operation was aborted');
-          error.name = 'AbortError';
+          const error = new Error('The operation was aborted due to timeout');
+          error.name = 'TimeoutError';
           reject(error);
         });
       });
+
     const client = new ExchangeRateApiClient({
-      settings: settings({ timeoutMs: 20, maxRetries: 1 }),
-      fetchFn: hangingFetch,
-      sleep: noSleep
+      settings: settings({ timeoutMs: 1000 }),
+      fetchFn: hangingFetch
     });
 
-    const result = await client.getRate('EUR');
+    const promise = client.getRates('USD', {
+      timeoutMs: 1000,
+      maxAttempts: 1,
+      cacheTtlMs: 3600000
+    });
 
-    expect(result.source).toBe('fallback');
-    expect(result.rate).toBe(0.92);
+    jest.advanceTimersByTime(1100);
+    await expect(promise).rejects.toThrow(/timeout/);
   });
 
-  it('lanza ExchangeRateUnavailableError si no hay respaldo para la moneda', async () => {
+  it('realiza hasta 3 intentos totales ante fallos transitorios y tiene exito en el tercero', async () => {
     const fetchFn = jest
       .fn<Promise<Response>, Parameters<FetchLike>>()
-      .mockRejectedValue(new Error('la API no responde'));
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(errorResponse(503))
+      .mockResolvedValueOnce(okResponse({ BRL: 5.4, ARS: 1400 }));
+
     const client = new ExchangeRateApiClient({
-      settings: settings({ maxRetries: 1, fallbackRates: { USD: 1 } }),
-      fetchFn,
-      sleep: noSleep
+      settings: settings({ maxAttempts: 3 }),
+      fetchFn
     });
 
-    await expect(client.getRate('JPY')).rejects.toBeInstanceOf(ExchangeRateUnavailableError);
+    const promise = client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+
+    await jest.advanceTimersByTimeAsync(1000);
+    const result = await promise;
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(result.source).toBe('api');
+    expect(result.rates.BRL).toBe(5.4);
   });
 
-  it('no consulta la API cuando la moneda destino es la moneda base', async () => {
-    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>();
-    const client = new ExchangeRateApiClient({ settings: settings(), fetchFn, sleep: noSleep });
+  it('falla con ExchangeRateError si se agotan los 3 intentos', async () => {
+    const fetchFn = jest
+      .fn<Promise<Response>, Parameters<FetchLike>>()
+      .mockRejectedValue(new Error('fallo de conexion'));
 
-    const result = await client.getRate('USD');
+    const client = new ExchangeRateApiClient({
+      settings: settings({ maxAttempts: 3 }),
+      fetchFn
+    });
 
-    expect(fetchFn).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ rate: 1, source: 'identity' });
+    const promise = client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+
+    const assertion = expect(promise).rejects.toThrow(ExchangeRateError);
+    await jest.advanceTimersByTimeAsync(2000);
+    await assertion;
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('no reintenta ante errores HTTP 4xx distintos de 429', async () => {
+    const fetchFn = jest
+      .fn<Promise<Response>, Parameters<FetchLike>>()
+      .mockResolvedValue(errorResponse(404));
+
+    const client = new ExchangeRateApiClient({
+      settings: settings({ maxAttempts: 3 }),
+      fetchFn
+    });
+
+    const promise = client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+
+    await expect(promise).rejects.toThrow(/404/);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('no reintenta ante un esquema invalido en la respuesta', async () => {
+    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ base: 'USD', rates: { BRL: -5 } })
+    } as unknown as Response);
+
+    const client = new ExchangeRateApiClient({
+      settings: settings({ maxAttempts: 3 }),
+      fetchFn
+    });
+
+    const promise = client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+
+    await expect(promise).rejects.toThrow(ExchangeRateError);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('sirve desde cache dentro del TTL y consulta la API al expirar', async () => {
+    const fetchFn = jest
+      .fn<Promise<Response>, Parameters<FetchLike>>()
+      .mockResolvedValue(okResponse({ BRL: 5.25 }));
+
+    const client = new ExchangeRateApiClient({
+      settings: settings({ cacheTtlMs: 3600000 }),
+      fetchFn
+    });
+
+    const first = await client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+    expect(first.source).toBe('api');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(1800000);
+    const second = await client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+    expect(second.source).toBe('cache');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(2000000);
+    const third = await client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+    expect(third.source).toBe('api');
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('aplica single-flight agrupando llamadas concurrentes y borra la promesa en finally', async () => {
+    let resolveFetch!: (res: Response) => void;
+    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const client = new ExchangeRateApiClient({
+      settings: settings(),
+      fetchFn
+    });
+
+    const p1 = client.getRates('USD', { timeoutMs: 5000, maxAttempts: 3, cacheTtlMs: 3600000 });
+    const p2 = client.getRates('USD', { timeoutMs: 5000, maxAttempts: 3, cacheTtlMs: 3600000 });
+
+    resolveFetch(okResponse({ BRL: 5.2 }));
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(r1.rates.BRL).toBe(5.2);
+    expect(r2.rates.BRL).toBe(5.2);
+
+    client.invalidate();
+    let rejectFetch!: (err: unknown) => void;
+    fetchFn.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFetch = reject;
+        })
+    );
+
+    const pFail = client.getRates('USD', { timeoutMs: 5000, maxAttempts: 1, cacheTtlMs: 3600000 });
+    rejectFetch(new Error('falla transitoria'));
+    await expect(pFail).rejects.toThrow();
+
+    fetchFn.mockImplementation(async () => okResponse({ BRL: 5.3 }));
+    const r3 = await client.getRates('USD', { timeoutMs: 5000, maxAttempts: 1, cacheTtlMs: 3600000 });
+    expect(r3.rates.BRL).toBe(5.3);
+  });
+
+  it('degrada a stale-cache cuando la API falla luego de haber vencido el TTL', async () => {
+    const fetchFn = jest
+      .fn<Promise<Response>, Parameters<FetchLike>>()
+      .mockResolvedValueOnce(okResponse({ BRL: 5.2 }));
+
+    const client = new ExchangeRateApiClient({
+      settings: settings({ cacheTtlMs: 1000 }),
+      fetchFn
+    });
+
+    const initial = await client.getRates('USD', { timeoutMs: 5000, maxAttempts: 1, cacheTtlMs: 1000 });
+    expect(initial.source).toBe('api');
+    expect(initial.rates.BRL).toBe(5.2);
+
+    jest.advanceTimersByTime(2000);
+
+    fetchFn.mockRejectedValue(new Error('servidor caido'));
+    const staleResult = await client.getRates('USD', { timeoutMs: 5000, maxAttempts: 1, cacheTtlMs: 1000 });
+
+    expect(staleResult.source).toBe('stale-cache');
+    expect(staleResult.rates.BRL).toBe(5.2);
+  });
+
+  it('vuelve a consultar la API tras invalidar la cache manualmente', async () => {
+    const fetchFn = jest
+      .fn<Promise<Response>, Parameters<FetchLike>>()
+      .mockResolvedValue(okResponse({ BRL: 5.2 }));
+
+    const client = new ExchangeRateApiClient({
+      settings: settings({ cacheTtlMs: 3600000 }),
+      fetchFn
+    });
+
+    await client.getRates('USD', { timeoutMs: 5000, maxAttempts: 3, cacheTtlMs: 3600000 });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    client.invalidate();
+    await client.getRates('USD', { timeoutMs: 5000, maxAttempts: 3, cacheTtlMs: 3600000 });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });

@@ -39,6 +39,13 @@ function createPutHandler(configStore: PipelineConfigStore, service: Reservation
   };
 }
 
+function registerCacheRoutes(router: Router, service: ReservationProcessingService): void {
+  router.post('/cache/invalidate', (_req, res) => {
+    service.invalidateRatesCache();
+    res.status(204).send();
+  });
+}
+
 function registerPipelineRoutes(
   router: Router,
   configStore: PipelineConfigStore,
@@ -48,6 +55,7 @@ function registerPipelineRoutes(
     res.status(200).json({ ...configStore.get(), filterOrder: [...FILTER_NAMES] });
   });
   router.put('/config', createPutHandler(configStore, service));
+  registerCacheRoutes(router, service);
   router.post('/config/reset', (_req, res) => {
     service.invalidateRatesCache();
     res.status(200).json(configStore.reset());

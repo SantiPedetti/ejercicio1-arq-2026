@@ -1,13 +1,13 @@
 export interface CachedRates {
   rates: Record<string, number>;
+  fetchedAt: Date;
   retrievedAt: string;
   expiresAt: number;
 }
 
 /**
  * Cache en memoria de tasas por moneda base con vencimiento por TTL.
- * Evita llamadas innecesarias a la API externa (tactica de rendimiento) y
- * amortigua fallos transitorios del proveedor.
+ * Guarda la ultima tasa aunque venza para permitir degradacion a stale-cache.
  */
 export class RatesCache {
   private readonly entries = new Map<string, CachedRates>();
@@ -19,19 +19,21 @@ export class RatesCache {
 
   get(baseCurrency: string): CachedRates | undefined {
     const entry = this.entries.get(baseCurrency);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= this.now()) {
-      this.entries.delete(baseCurrency);
-      return undefined;
-    }
+    if (!entry || entry.expiresAt <= this.now()) return undefined;
     return entry;
   }
 
-  set(baseCurrency: string, rates: Record<string, number>): CachedRates {
+  getStale(baseCurrency: string): CachedRates | undefined {
+    return this.entries.get(baseCurrency);
+  }
+
+  set(baseCurrency: string, rates: Record<string, number>, fetchedAt?: Date): CachedRates {
     const timestamp = this.now();
+    const date = fetchedAt ?? new Date(timestamp);
     const entry: CachedRates = {
       rates,
-      retrievedAt: new Date(timestamp).toISOString(),
+      fetchedAt: date,
+      retrievedAt: date.toISOString(),
       expiresAt: timestamp + this.ttlMs
     };
     this.entries.set(baseCurrency, entry);

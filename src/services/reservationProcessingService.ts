@@ -60,6 +60,7 @@ function buildInvalidResult(id: string, now: Date, error?: z.ZodError): Reservat
   return {
     reservationId: id,
     status: 'REJECTED',
+    conversion: null,
     errors: [{ filter: 'source', code: 'INVALID_RESERVATION', message, severity: 'error', details: error?.issues }],
     warnings: [],
     trace: [],
@@ -183,7 +184,13 @@ export class ReservationProcessingService {
 
   invalidateRatesCache(): void {
     this.ratesCache.invalidate();
-    this.injectedProvider?.invalidateCache();
+    if (this.injectedProvider) {
+      if (typeof this.injectedProvider.invalidate === 'function') {
+        this.injectedProvider.invalidate();
+      } else if (typeof this.injectedProvider.invalidateCache === 'function') {
+        this.injectedProvider.invalidateCache();
+      }
+    }
   }
 
   private buildProvider(config: PipelineConfig): ExchangeRateProvider {

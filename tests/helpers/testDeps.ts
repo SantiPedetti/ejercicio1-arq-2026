@@ -7,8 +7,9 @@ import { FilterDependencies } from '../../src/pipeline/filter';
 import { createFlightRepository } from '../../src/repositories/flightRepository';
 import { createPassengerRepository } from '../../src/repositories/passengerRepository';
 import {
+  ExchangeRateError,
   ExchangeRateProvider,
-  ExchangeRateResult
+  RatesResult
 } from '../../src/services/exchangeRate/exchangeRateProvider';
 import { FixedClock } from '../../src/support/clock';
 import { silentLogger } from '../../src/support/logger';
@@ -23,25 +24,57 @@ export function configWith(patch: Parameters<PipelineConfigStore['update']>[0] =
 }
 
 /** Proveedor de tasas determinista: no toca la red. */
-export function stubRateProvider(result?: Partial<ExchangeRateResult>): ExchangeRateProvider {
+export function stubRateProvider(
+  result?: Partial<RatesResult & { rate?: number; targetCurrency?: string; source?: RatesResult['source'] }>
+): ExchangeRateProvider {
+  const rate = result?.rate ?? 5;
+  const rates: Record<string, number> = result?.rates ?? {
+    ARS: 1450,
+    BRL: 5.2,
+    EUR: 0.92,
+    GBP: 0.79,
+    CLP: 950,
+    MXN: 17.5,
+    PEN: 3.75,
+    UYU: 39.5
+  };
+  if (result?.targetCurrency) {
+    rates[result.targetCurrency] = rate;
+  }
+  if (result?.rate !== undefined && !result?.rates) {
+    for (const key of Object.keys(rates)) {
+      rates[key] = result.rate;
+    }
+  }
+  const source = result?.source ?? 'api';
+  const fetchedAt = result?.fetchedAt instanceof Date ? result.fetchedAt : new Date('2026-01-01T00:00:00.000Z');
   return {
+    getRates: async () => ({
+      rates,
+      source,
+      fetchedAt
+    }),
     getRate: async (targetCurrency) => ({
       baseCurrency: 'USD',
       targetCurrency,
-      rate: 5,
-      source: 'api',
-      retrievedAt: '2026-01-01T00:00:00.000Z',
-      ...result
+      rate: rates[targetCurrency] ?? rate,
+      source,
+      retrievedAt: fetchedAt.toISOString()
     }),
+    invalidate: () => undefined,
     invalidateCache: () => undefined
   };
 }
 
 export function failingRateProvider(message = 'la API no responde'): ExchangeRateProvider {
   return {
-    getRate: async () => {
-      throw new Error(message);
+    getRates: async () => {
+      throw new ExchangeRateError(message);
     },
+    getRate: async () => {
+      throw new ExchangeRateError(message);
+    },
+    invalidate: () => undefined,
     invalidateCache: () => undefined
   };
 }

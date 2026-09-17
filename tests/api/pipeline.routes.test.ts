@@ -76,6 +76,15 @@ describe('PUT /pipeline/config', () => {
   });
 });
 
+describe('POST /pipeline/cache/invalidate', () => {
+  it('invalida la cache de tasas de cambio y responde 204', async () => {
+    const app = appWith();
+    const response = await request(app).post('/pipeline/cache/invalidate');
+
+    expect(response.status).toBe(204);
+  });
+});
+
 describe('rutas inexistentes', () => {
   it('devuelve 404 con codigo de error uniforme', async () => {
     const response = await request(appWith()).get('/no-existe');

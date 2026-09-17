@@ -59,7 +59,30 @@ export interface PriceBreakdown {
   total?: number;
 }
 
-export type RateSource = 'api' | 'cache' | 'fallback' | 'identity';
+export type ExchangeRateSource = 'api' | 'cache' | 'stale-cache';
+
+export type RateSource = 'api' | 'cache' | 'stale-cache' | 'fallback' | 'identity';
+
+export interface ExchangeRateData {
+  currency: string;
+  rate: number;
+  source: ExchangeRateSource;
+  fetchedAt: string;
+}
+
+export interface LocalConversionData {
+  baseFareLocal?: number;
+  totalLocal?: number;
+}
+
+export interface ConversionResult {
+  currency: string;
+  rate: number;
+  source: ExchangeRateSource;
+  fetchedAt: string;
+  baseFareLocal?: number;
+  totalLocal?: number;
+}
 
 export interface CurrencyMetadata {
   baseCurrency: string;

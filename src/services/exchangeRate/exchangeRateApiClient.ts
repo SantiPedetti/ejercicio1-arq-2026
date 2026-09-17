@@ -1,9 +1,13 @@
+import { z } from 'zod';
 import { ExchangeRateSettings } from '../../config/pipelineConfig';
 import { Logger, silentLogger } from '../../support/logger';
 import {
+  ExchangeRateError,
+  ExchangeRateOptions,
   ExchangeRateProvider,
   ExchangeRateResult,
-  ExchangeRateUnavailableError
+  ExchangeRateUnavailableError,
+  RatesResult
 } from './exchangeRateProvider';
 import { RatesCache } from './ratesCache';
 
@@ -12,26 +16,76 @@ export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promis
 export interface ExchangeRateApiClientDeps {
   settings: ExchangeRateSettings;
   logger?: Logger;
-  /** Inyectable para poder simular fallos y timeouts en pruebas. */
   fetchFn?: FetchLike;
   cache?: RatesCache;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  random?: () => number;
 }
 
-interface ExchangeRateApiResponse {
-  base?: string;
-  date?: string;
-  rates?: Record<string, number>;
-}
+const apiResponseSchema = z
+  .object({
+    base: z.string(),
+    rates: z.record(z.string(), z.number().positive())
+  })
+  .passthrough();
 
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
 
+function isRetryableHttp(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function calculateDelay(attempt: number, baseMs = 200, random = Math.random): number {
+  const nominal = baseMs * Math.pow(2, attempt - 1);
+  const jitter = 0.8 + random() * 0.4;
+  return Math.round(nominal * jitter);
+}
+
+function checkAbortError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.name === 'AbortError' || error.name === 'TimeoutError';
+  }
+  return false;
+}
+
+function parsePayload(json: unknown): Record<string, number> {
+  const parsed = apiResponseSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new ExchangeRateError('INVALID_RESPONSE', parsed.error);
+  }
+  return parsed.data.rates;
+}
+
+async function callFetch(url: string, timeoutMs: number, fetchFn: FetchLike): Promise<Response> {
+  try {
+    return await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    if (checkAbortError(err)) throw new Error(`timeout de ${timeoutMs} ms`);
+    throw err;
+  }
+}
+
+async function fetchRatesHttp(
+  url: string,
+  timeoutMs: number,
+  fetchFn: FetchLike
+): Promise<Record<string, number>> {
+  const res = await callFetch(url, timeoutMs, fetchFn);
+  if (!res.ok) {
+    const msg = `la API respondio con estado HTTP ${res.status}`;
+    if (!isRetryableHttp(res.status)) throw new ExchangeRateError(msg);
+    throw new Error(msg);
+  }
+  return parsePayload(await res.json());
+}
+
 /**
- * Cliente de ExchangeRate-API con las tacticas de disponibilidad exigidas:
- * timeout acotado, reintentos, cache en memoria y tasas de respaldo.
+ * Cliente HTTP y cache con tacticas de disponibilidad: timeout por intento,
+ * reintentos con backoff y jitter, single-flight y degradacion a stale-cache.
  */
 export class ExchangeRateApiClient implements ExchangeRateProvider {
   private readonly settings: ExchangeRateSettings;
@@ -39,114 +93,125 @@ export class ExchangeRateApiClient implements ExchangeRateProvider {
   private readonly fetchFn: FetchLike;
   private readonly cache: RatesCache;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly now: () => number;
+  private readonly random: () => number;
+  private readonly inFlightPromises = new Map<string, Promise<RatesResult>>();
 
   constructor(deps: ExchangeRateApiClientDeps) {
     this.settings = deps.settings;
     this.logger = deps.logger ?? silentLogger;
     this.fetchFn = deps.fetchFn ?? ((url, init) => fetch(url, init));
-    this.cache = deps.cache ?? new RatesCache(deps.settings.cacheTtlMs);
+    this.cache = deps.cache ?? new RatesCache(deps.settings.cacheTtlMs, deps.now);
     this.sleep = deps.sleep ?? defaultSleep;
+    this.now = deps.now ?? (() => Date.now());
+    this.random = deps.random ?? Math.random;
+  }
+
+  invalidate(): void {
+    this.cache.invalidate();
+    this.inFlightPromises.clear();
   }
 
   invalidateCache(): void {
-    this.cache.invalidate();
+    this.invalidate();
   }
 
-  private getCachedOrIdentity(base: string, target: string): ExchangeRateResult | undefined {
-    if (base === target) {
-      return { baseCurrency: base, targetCurrency: target, rate: 1, source: 'identity', retrievedAt: new Date().toISOString() };
-    }
-    const cached = this.cache.get(base);
-    const cachedRate = cached?.rates[target];
-    if (cached && typeof cachedRate === 'number') {
-      return { baseCurrency: base, targetCurrency: target, rate: cachedRate, source: 'cache', retrievedAt: cached.retrievedAt };
-    }
-    return undefined;
+  private async onAttemptError(err: unknown, attempt: number, max: number): Promise<never> {
+    if (err instanceof ExchangeRateError) throw err;
+    this.logger.warn('Fallo intento contra la API de tipo de cambio', { attempt, maxAttempts: max, err });
+    if (attempt < max) await this.sleep(calculateDelay(attempt, 200, this.random));
+    throw err;
   }
 
-  private getFreshOrFallback(base: string, target: string, failureReason?: string): ExchangeRateResult {
-    if (!failureReason) {
-      const fresh = this.cache.get(base);
-      const rate = fresh?.rates[target];
-      if (fresh && typeof rate === 'number') {
-        return { baseCurrency: base, targetCurrency: target, rate, source: 'api', retrievedAt: fresh.retrievedAt };
-      }
-      this.logger.warn('La API respondio pero no incluye la moneda solicitada', { base, target });
+  private async executeAttempt(
+    url: string,
+    timeoutMs: number,
+    attempt: number,
+    max: number
+  ): Promise<Record<string, number>> {
+    try {
+      return await fetchRatesHttp(url, timeoutMs, this.fetchFn);
+    } catch (err) {
+      return await this.onAttemptError(err, attempt, max);
     }
-    return this.resolveFallback(base, target, failureReason);
   }
 
-  private resolveFallback(base: string, target: string, failureReason?: string): ExchangeRateResult {
-    const rate = this.settings.fallbackRates[target];
-    if (typeof rate === 'number') {
-      this.logger.warn('Se aplica tasa de cambio de respaldo', { base, target, rate, failureReason });
-      return { baseCurrency: base, targetCurrency: target, rate, source: 'fallback', retrievedAt: new Date().toISOString() };
+  private throwExhausted(base: string, max: number, lastError: unknown): never {
+    const msg = lastError instanceof Error ? lastError.message : String(lastError);
+    this.logger.error('Se agotaron los reintentos contra la API de tipo de cambio', { base, max });
+    throw new ExchangeRateError(`Fallo tras ${max} intentos: ${msg}`);
+  }
+
+  private async tryAttempt(url: string, timeoutMs: number, attempt: number, max: number) {
+    try {
+      return { rates: await this.executeAttempt(url, timeoutMs, attempt, max) };
+    } catch (err) {
+      if (err instanceof ExchangeRateError) throw err;
+      return { error: err };
     }
-    throw new ExchangeRateUnavailableError(target, failureReason ?? 'la moneda no esta en la respuesta ni en las tasas de respaldo');
+  }
+
+  private async requestWithRetries(base: string, opts: ExchangeRateOptions): Promise<Record<string, number>> {
+    const max = opts.maxAttempts ?? this.settings.maxAttempts ?? 3;
+    const url = `${this.settings.apiBaseUrl}/${base}`;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= max; attempt += 1) {
+      const res = await this.tryAttempt(url, opts.timeoutMs, attempt, max);
+      if (res.rates) return res.rates;
+      lastError = res.error;
+    }
+    return this.throwExhausted(base, max, lastError);
+  }
+
+  private handleFetchFailure(base: string, err: unknown): RatesResult {
+    const stale = this.cache.getStale(base);
+    if (stale) {
+      this.logger.warn('Se aplica tasa de cambio vencida en cache', { base });
+      return { rates: stale.rates, source: 'stale-cache', fetchedAt: stale.fetchedAt };
+    }
+    throw err instanceof ExchangeRateError ? err : new ExchangeRateError(String(err));
+  }
+
+  private async fetchAndCache(base: string, opts: ExchangeRateOptions): Promise<RatesResult> {
+    try {
+      const rates = await this.requestWithRetries(base, opts);
+      const fetchedAt = new Date(this.now());
+      this.cache.setTtl(opts.cacheTtlMs);
+      this.cache.set(base, rates, fetchedAt);
+      return { rates, source: 'api', fetchedAt };
+    } catch (err) {
+      return this.handleFetchFailure(base, err);
+    }
+  }
+
+  async getRates(base: string, opts: ExchangeRateOptions): Promise<RatesResult> {
+    const baseUpper = base.toUpperCase();
+    const cached = this.cache.get(baseUpper);
+    if (cached) return { rates: cached.rates, source: 'cache', fetchedAt: cached.fetchedAt };
+    const inFlight = this.inFlightPromises.get(baseUpper);
+    if (inFlight) return inFlight;
+    const promise = this.fetchAndCache(baseUpper, opts);
+    this.inFlightPromises.set(baseUpper, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlightPromises.delete(baseUpper);
+    }
   }
 
   async getRate(targetCurrency: string): Promise<ExchangeRateResult> {
     const base = this.settings.baseCurrency.toUpperCase();
     const target = targetCurrency.toUpperCase();
-    const immediate = this.getCachedOrIdentity(base, target);
-    if (immediate) return immediate;
-    const failureReason = await this.refreshRates(base);
-    return this.getFreshOrFallback(base, target, failureReason);
-  }
-
-  private async executeAttempt(base: string, attempt: number, attempts: number): Promise<string | undefined> {
-    try {
-      const rates = await this.requestRates(base);
-      this.cache.setTtl(this.settings.cacheTtlMs);
-      this.cache.set(base, rates);
-      return undefined;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn('Fallo la llamada a la API de tipo de cambio', { base, attempt, attempts, error: msg });
-      if (attempt < attempts) await this.sleep(this.settings.retryDelayMs * attempt);
-      return msg;
+    if (base === target) {
+      return { baseCurrency: base, targetCurrency: target, rate: 1, source: 'identity', retrievedAt: new Date(this.now()).toISOString() };
     }
-  }
-
-  private async refreshRates(base: string): Promise<string | undefined> {
-    const attempts = Math.max(1, this.settings.maxRetries);
-    let lastError = 'error desconocido';
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const err = await this.executeAttempt(base, attempt, attempts);
-      if (!err) return undefined;
-      lastError = err;
-    }
-    this.logger.error('Se agotaron los reintentos contra la API de tipo de cambio', { base, attempts, error: lastError });
-    return lastError;
-  }
-
-  private parseRatesPayload(payload: ExchangeRateApiResponse): Record<string, number> {
-    if (!payload.rates || typeof payload.rates !== 'object') {
-      throw new Error('la respuesta de la API no contiene el objeto rates');
-    }
-    return payload.rates;
-  }
-
-  private handleRequestError(error: unknown): never {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`timeout de ${this.settings.timeoutMs} ms al consultar la API de tipo de cambio`);
-    }
-    throw error;
-  }
-
-  private async requestRates(base: string): Promise<Record<string, number>> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.settings.timeoutMs);
-    try {
-      const url = `${this.settings.apiBaseUrl}/${base}`;
-      const response = await this.fetchFn(url, { signal: controller.signal });
-      if (!response.ok) throw new Error(`la API respondio con estado HTTP ${response.status}`);
-      const payload = (await response.json()) as ExchangeRateApiResponse;
-      return this.parseRatesPayload(payload);
-    } catch (error) {
-      this.handleRequestError(error);
-    } finally {
-      clearTimeout(timer);
-    }
+    const res = await this.getRates(base, {
+      timeoutMs: this.settings.timeoutMs,
+      maxAttempts: this.settings.maxAttempts ?? this.settings.maxRetries ?? 3,
+      cacheTtlMs: this.settings.cacheTtlMs
+    });
+    const rate = res.rates[target];
+    if (typeof rate !== 'number') throw new ExchangeRateUnavailableError(target);
+    return { baseCurrency: base, targetCurrency: target, rate, source: res.source, retrievedAt: res.fetchedAt.toISOString() };
   }
 }

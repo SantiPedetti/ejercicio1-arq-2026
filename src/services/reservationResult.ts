@@ -1,5 +1,11 @@
 import { errorsOf, ReservationContext, ReservationStatus, warningsOf } from '../domain/reservationContext';
-import { CurrencyMetadata, FilterTrace, PriceBreakdown, ProcessingIssue } from '../domain/types';
+import {
+  ConversionResult,
+  CurrencyMetadata,
+  FilterTrace,
+  PriceBreakdown,
+  ProcessingIssue
+} from '../domain/types';
 import { round2 } from '../support/money';
 
 export interface ReservationResult {
@@ -19,6 +25,7 @@ export interface ReservationResult {
     destinationCountry: string;
   };
   pricing?: PriceBreakdown;
+  conversion: ConversionResult | null;
   currency?: CurrencyMetadata;
   errors: ProcessingIssue[];
   warnings: ProcessingIssue[];
@@ -67,6 +74,28 @@ function roundCurrency(c?: CurrencyMetadata): CurrencyMetadata | undefined {
   return { ...c, ...(convertedTotal !== undefined ? { convertedTotal } : {}) };
 }
 
+function attachLocalAmounts(res: ConversionResult, conv?: ReservationContext['conversion']): ConversionResult {
+  const baseFareLocal = typeof conv?.baseFareLocal === 'number' ? round2(conv.baseFareLocal) : undefined;
+  const totalLocal = typeof conv?.totalLocal === 'number' ? round2(conv.totalLocal) : undefined;
+  return {
+    ...res,
+    ...(baseFareLocal !== undefined ? { baseFareLocal } : {}),
+    ...(totalLocal !== undefined ? { totalLocal } : {})
+  };
+}
+
+function projectConversion(ctx: ReservationContext): ConversionResult | null {
+  const rate = ctx.exchangeRate;
+  if (!rate) return null;
+  const base: ConversionResult = {
+    currency: rate.currency,
+    rate: rate.rate,
+    source: rate.source,
+    fetchedAt: rate.fetchedAt
+  };
+  return attachLocalAmounts(base, ctx.conversion);
+}
+
 /** Proyecta el contexto interno del pipeline al contrato publico de la API. */
 export function toReservationResult(context: ReservationContext, processedAt = new Date()): ReservationResult {
   return {
@@ -75,6 +104,7 @@ export function toReservationResult(context: ReservationContext, processedAt = n
     ...(context.passenger ? { passenger: projectPassenger(context.passenger, context) } : {}),
     ...(context.flight ? { flight: projectFlight(context.flight) } : {}),
     ...(context.pricing ? { pricing: roundPricing(context.pricing) } : {}),
+    conversion: projectConversion(context),
     ...(context.currency ? { currency: roundCurrency(context.currency) } : {}),
     errors: errorsOf(context),
     warnings: warningsOf(context),

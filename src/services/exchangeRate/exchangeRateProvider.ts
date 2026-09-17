@@ -1,4 +1,4 @@
-import { RateSource } from '../../domain/types';
+import { ExchangeRateSource, RateSource } from '../../domain/types';
 
 export interface ExchangeRateResult {
   baseCurrency: string;
@@ -8,19 +8,43 @@ export interface ExchangeRateResult {
   retrievedAt: string;
 }
 
+export interface RatesResult {
+  rates: Record<string, number>;
+  source: ExchangeRateSource;
+  fetchedAt: Date;
+}
+
+export interface ExchangeRateOptions {
+  timeoutMs: number;
+  maxAttempts: number;
+  cacheTtlMs: number;
+  retryDelayMs?: number;
+}
+
 /**
  * Puerto que abstrae la integracion con el proveedor de tasas de cambio. Los
  * filtros dependen de esta interfaz y no del cliente HTTP concreto, lo que
  * permite sustituirlo en pruebas o cambiar de proveedor sin tocar el pipeline.
  */
 export interface ExchangeRateProvider {
-  getRate(targetCurrency: string): Promise<ExchangeRateResult>;
-  /** Invalidacion manual de la cache de tasas. */
-  invalidateCache(): void;
+  getRates(base: string, opts: ExchangeRateOptions): Promise<RatesResult>;
+  invalidate(): void;
+  invalidateCache?(): void;
+  getRate?(targetCurrency: string): Promise<ExchangeRateResult>;
 }
 
-/** Se lanza cuando ni la API ni las tasas de respaldo pueden resolver la moneda. */
-export class ExchangeRateUnavailableError extends Error {
+export class ExchangeRateError extends Error {
+  constructor(
+    message: string,
+    override readonly cause?: unknown
+  ) {
+    super(message);
+    this.name = 'ExchangeRateError';
+  }
+}
+
+/** Se lanza cuando ni la API ni la cache pueden resolver la moneda. */
+export class ExchangeRateUnavailableError extends ExchangeRateError {
   constructor(
     readonly targetCurrency: string,
     readonly reason?: string

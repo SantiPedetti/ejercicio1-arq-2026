@@ -150,6 +150,8 @@
 
 ## F6 — Tests (PLAN §9)
 
+- **Pendiente de la revisión de F5:** en `fetchRatesHttp`, un body que no es JSON válido (falla `res.json()`) hoy se reintenta. Tiene que lanzar `ExchangeRateError('INVALID_RESPONSE')` sin reintentar, igual que un esquema inválido. Agregar su test.
+
 - **Pendiente de F1 (revisión):** el script `test` debe pasar a `jest --ci --runInBand --coverage`, para que `verify` aplique el umbral del 80%. Hoy las ramas están en 79,42%: los tests nuevos tienen que subirlas por encima del umbral.
 
 - **Unitarios:** un archivo por filtro, con cada código de error.

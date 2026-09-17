@@ -44,10 +44,10 @@ export const pipelineConfigPatchSchema = z
       .object({
         baseCurrency: z.string().trim().length(3).optional(),
         timeoutMs: z.number().int().min(100).max(30000).optional(),
+        maxAttempts: z.number().int().min(1).max(5).optional(),
         maxRetries: z.number().int().min(1).max(10).optional(),
         retryDelayMs: z.number().int().min(0).max(10000).optional(),
-        cacheTtlMs: z.number().int().min(0).optional(),
-        fallbackRates: z.record(z.string().trim().length(3), z.number().positive()).optional()
+        cacheTtlMs: z.number().int().min(0).optional()
       })
       .strict()
       .optional()

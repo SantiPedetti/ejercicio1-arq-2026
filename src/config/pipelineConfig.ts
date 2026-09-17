@@ -18,11 +18,11 @@ export interface ExchangeRateSettings {
   baseCurrency: string;
   apiBaseUrl: string;
   timeoutMs: number;
-  maxRetries: number;
+  maxAttempts: number;
   retryDelayMs: number;
   cacheTtlMs: number;
-  /** Tasas usadas cuando la API externa no responde. */
-  fallbackRates: Record<string, number>;
+  /** @deprecated compatibility alias */
+  maxRetries?: number;
 }
 
 export interface TaxSettings {
@@ -79,21 +79,10 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     baseCurrency: 'USD',
     apiBaseUrl: env.EXCHANGE_API_BASE_URL,
     timeoutMs: 5000,
+    maxAttempts: 3,
     maxRetries: 3,
     retryDelayMs: 200,
-    cacheTtlMs: 60 * 60 * 1000,
-    fallbackRates: {
-      USD: 1,
-      ARS: 1000,
-      BRL: 5.2,
-      EUR: 0.92,
-      GBP: 0.79,
-      CLP: 950,
-      MXN: 17.5,
-      PEN: 3.75,
-      UYU: 39.5,
-      COP: 4000
-    }
+    cacheTtlMs: 60 * 60 * 1000
   }
 };
 
@@ -117,8 +106,7 @@ function mergeExchangeRate(
 ): ExchangeRateSettings {
   return {
     ...current,
-    ...patch,
-    fallbackRates: { ...current.fallbackRates, ...patch?.fallbackRates }
+    ...patch
   };
 }
 

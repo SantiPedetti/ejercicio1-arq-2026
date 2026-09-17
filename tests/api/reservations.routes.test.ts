@@ -101,7 +101,7 @@ describe('POST /reservations/process', () => {
     expect(response.status).toBe(200);
     expect(response.body.results[0].status).toBe('CONFIRMED');
     expect(response.body.results[0].warnings[0].code).toBe('EXCHANGE_RATE_UNAVAILABLE');
-    expect(response.body.results[0].currency).toMatchObject({ targetCurrency: 'USD', rate: 1 });
+    expect(response.body.results[0].conversion).toBeNull();
     expect(response.body.results[0].pricing.total).toBeGreaterThan(0);
   });
 
