@@ -254,6 +254,8 @@ El sistema adopta como patrón estructurador principal **Pipes & Filters**, inte
 
 ### 3.1 Diagrama de contexto
 
+> Esquema interactivo generado con la skill Archify: [`archify-arquitectura.html`](archify-arquitectura.html) (abrir en el navegador; especificacion en [`diagrams/archify-arquitectura.json`](diagrams/archify-arquitectura.json)). Incluye vistas guiadas, busqueda y trazado de relaciones sobre el mismo modelo descrito en este documento.
+
 El diagrama de contexto presenta al sistema como una caja negra delimitada, ilustrando todas sus interacciones con actores externos y el protocolo y sincronismo de sus conectores.
 
 ```mermaid

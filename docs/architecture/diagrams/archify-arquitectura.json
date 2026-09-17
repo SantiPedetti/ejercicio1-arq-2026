@@ -1,0 +1,384 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Reservas de Vuelos — Pipes & Filters",
+    "output": "archify-arquitectura.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "camino-principal",
+        "label": "Camino de una reserva",
+        "focus": [
+          "cliente",
+          "api",
+          "servicio",
+          "runner",
+          "validaciones",
+          "precio"
+        ],
+        "note": "Recorrido de un lote desde HTTP hasta el resultado calculado."
+      },
+      {
+        "id": "tipo-de-cambio",
+        "label": "Integracion externa",
+        "focus": [
+          "fx",
+          "conversion",
+          "proveedor",
+          "apifx"
+        ],
+        "note": "Obtencion de la tasa, conversion a moneda local y tacticas de disponibilidad."
+      },
+      {
+        "id": "datos",
+        "label": "Datos en memoria",
+        "focus": [
+          "config",
+          "repos",
+          "store"
+        ],
+        "note": "Configuracion del pipeline, repositorios mock y resultados por reserva."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "cliente",
+      "type": "external",
+      "label": "Cliente HTTP",
+      "sublabel": "Postman",
+      "pos": [
+        40,
+        280
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "config",
+      "type": "cloud",
+      "label": "Config del pipeline",
+      "sublabel": "snapshot por lote",
+      "pos": [
+        280,
+        90
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "api",
+      "type": "frontend",
+      "label": "Capa HTTP",
+      "sublabel": "Express 5 + Zod",
+      "pos": [
+        280,
+        280
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "6 endpoints"
+    },
+    {
+      "id": "repos",
+      "type": "database",
+      "label": "Repositorios mock",
+      "sublabel": "pasajeros, vuelos",
+      "pos": [
+        560,
+        90
+      ],
+      "size": [
+        155,
+        60
+      ]
+    },
+    {
+      "id": "servicio",
+      "type": "backend",
+      "label": "Servicio",
+      "sublabel": "source + sink",
+      "pos": [
+        560,
+        280
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "Resultados",
+      "sublabel": "1000 FIFO",
+      "pos": [
+        40,
+        510
+      ],
+      "size": [
+        155,
+        60
+      ]
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Pipeline runner",
+      "sublabel": "orden fijo + guard",
+      "pos": [
+        840,
+        280
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "proveedor",
+      "type": "cloud",
+      "label": "Proveedor de tasas",
+      "sublabel": "cache 1h, single-flight",
+      "pos": [
+        840,
+        510
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "5 s, 3 intentos"
+    },
+    {
+      "id": "apifx",
+      "type": "external",
+      "label": "ExchangeRate-API",
+      "sublabel": "v4 /latest/USD",
+      "pos": [
+        560,
+        510
+      ],
+      "size": [
+        165,
+        60
+      ]
+    },
+    {
+      "id": "validaciones",
+      "type": "security",
+      "label": "Filtros 1-2",
+      "sublabel": "pasajero, vuelo",
+      "pos": [
+        1130,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "fx",
+      "type": "backend",
+      "label": "Filtro 3",
+      "sublabel": "tasa de cambio",
+      "pos": [
+        1130,
+        510
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "precio",
+      "type": "backend",
+      "label": "Filtros 4-7",
+      "sublabel": "precio e impuestos",
+      "pos": [
+        1130,
+        230
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "conversion",
+      "type": "backend",
+      "label": "Filtro 8",
+      "sublabel": "moneda local",
+      "pos": [
+        1130,
+        370
+      ],
+      "size": [
+        150,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Proceso Node.js 22",
+      "wraps": [
+        "config",
+        "api",
+        "repos",
+        "servicio",
+        "store",
+        "runner",
+        "proveedor",
+        "validaciones",
+        "fx",
+        "precio",
+        "conversion"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Pipeline de 8 filtros",
+      "wraps": [
+        "validaciones",
+        "fx",
+        "precio",
+        "conversion"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "cliente-api",
+      "from": "cliente",
+      "to": "api",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-servicio",
+      "from": "api",
+      "to": "servicio",
+      "label": "lote",
+      "labelDy": 20
+    },
+    {
+      "id": "api-config",
+      "from": "api",
+      "to": "config",
+      "label": "GET / PUT",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDy": -66
+    },
+    {
+      "id": "config-servicio",
+      "from": "config",
+      "to": "servicio",
+      "label": "snapshot",
+      "variant": "dashed"
+    },
+    {
+      "id": "servicio-repos",
+      "from": "servicio",
+      "to": "repos",
+      "label": "carga",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDy": -66
+    },
+    {
+      "id": "servicio-store",
+      "from": "servicio",
+      "to": "store",
+      "label": "guarda"
+    },
+    {
+      "id": "servicio-runner",
+      "from": "servicio",
+      "to": "runner",
+      "label": "ejecuta",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runner-validaciones",
+      "from": "runner",
+      "to": "validaciones",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "runner-fx",
+      "from": "runner",
+      "to": "fx",
+      "variant": "dashed"
+    },
+    {
+      "id": "runner-precio",
+      "from": "runner",
+      "to": "precio"
+    },
+    {
+      "id": "runner-conversion",
+      "from": "runner",
+      "to": "conversion",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "fx-proveedor",
+      "from": "fx",
+      "to": "proveedor",
+      "label": "getRates",
+      "labelDy": 18
+    },
+    {
+      "id": "proveedor-apifx",
+      "from": "proveedor",
+      "to": "apifx",
+      "label": "HTTPS",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Pipeline",
+      "items": [
+        "8 filtros en orden fijo, habilitables por configuracion",
+        "Cada filtro devuelve un contexto nuevo",
+        "context-guard corta la reserva con DATA_CORRUPTED",
+        "Linea punteada: filtro no critico, el pipeline sigue con warning"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Precio",
+      "items": [
+        "Clase, lealtad y tipo de pasajero encadenados",
+        "Impuestos 12%, combustible 8%, tasa fija de 25 USD",
+        "El redondeo ocurre solo en el sink"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Disponibilidad",
+      "items": [
+        "Timeout de 5 s y 3 intentos con backoff",
+        "Cache de 1 h, single-flight y tasa vencida de respaldo",
+        "Sin tasa la reserva sigue en USD con warning"
+      ]
+    }
+  ]
+}
