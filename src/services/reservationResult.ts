@@ -48,8 +48,12 @@ function projectFlight(f: ReservationContext['flight']) {
 }
 
 function roundPricing(p: PriceBreakdown): PriceBreakdown {
-  const rounded = { ...p };
-  for (const [key, val] of Object.entries(p)) {
+  const currentPrice = p.currentPrice ?? p.baseFare ?? 0;
+  const subtotal = p.subtotal ?? currentPrice;
+  const total = p.total ?? currentPrice;
+  const withDefaults: PriceBreakdown = { ...p, subtotal, total };
+  const rounded: PriceBreakdown = {};
+  for (const [key, val] of Object.entries(withDefaults)) {
     if (typeof val === 'number') {
       (rounded as Record<string, unknown>)[key] = round2(val);
     }

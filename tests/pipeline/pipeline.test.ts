@@ -170,15 +170,16 @@ describe('orquestador del pipeline', () => {
       execute: (context) => ({
         ...context,
         pricing: {
-          flightBasePriceUsd: -100,
-          classAdjustedPriceUsd: -100,
-          loyaltyDiscountUsd: 0,
-          passengerTypeDiscountUsd: 0,
-          netPriceUsd: -100,
-          taxesUsd: 0,
-          airportFeeUsd: 0,
-          fuelSurchargeUsd: 0,
-          totalUsd: -100
+          baseFare: -100,
+          classPrice: -100,
+          loyaltyDiscount: 0,
+          passengerTypeDiscount: 0,
+          currentPrice: -100,
+          subtotal: -100,
+          taxes: 0,
+          airportFee: 0,
+          fuelSurcharge: 0,
+          total: -100
         }
       })
     };
@@ -206,10 +207,7 @@ describe('orquestador del pipeline', () => {
       expect.objectContaining({
         baseFare: flight.baseFare,
         classPrice: flight.baseFare,
-        currentPrice: flight.baseFare,
-        flightBasePriceUsd: flight.baseFare,
-        classAdjustedPriceUsd: flight.baseFare,
-        totalUsd: flight.baseFare
+        currentPrice: flight.baseFare
       })
     );
   });

@@ -32,13 +32,11 @@ export interface ReservationContext {
 
 export function createNeutralPricing(baseFare: number): PriceBreakdown {
   return {
-    flightBasePriceUsd: baseFare, classAdjustedPriceUsd: baseFare,
-    loyaltyDiscountUsd: 0, passengerTypeDiscountUsd: 0,
-    netPriceUsd: baseFare, taxesUsd: 0, airportFeeUsd: 0,
-    fuelSurchargeUsd: 0, totalUsd: baseFare,
-    baseFare, classPrice: baseFare, currentPrice: baseFare,
-    loyaltyDiscount: 0, passengerTypeDiscount: 0,
-    subtotal: baseFare, taxes: 0, airportFee: 0, fuelSurcharge: 0, total: baseFare
+    baseFare,
+    classPrice: baseFare,
+    currentPrice: baseFare,
+    loyaltyDiscount: 0,
+    passengerTypeDiscount: 0
   };
 }
 

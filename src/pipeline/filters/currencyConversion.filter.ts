@@ -14,7 +14,7 @@ function warnMissingCurrency(context: ReservationContext): ReservationContext {
 
 function applyConversion(context: ReservationContext): ReservationContext {
   if (!context.pricing || !context.currency) return context;
-  const total = context.pricing.total ?? context.pricing.totalUsd ?? 0;
+  const total = context.pricing.total ?? context.pricing.currentPrice ?? 0;
   const convertedTotal = total * context.currency.rate;
   return {
     ...context,

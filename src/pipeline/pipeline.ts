@@ -233,12 +233,28 @@ export class Pipeline {
   }
 }
 
-function finalizeStatus(context: ReservationContext): ReservationContext {
-  if (context.status === 'REJECTED' || context.status === 'FAILED') return context;
-  if (hasErrors(context)) {
-    return { ...context, status: 'REJECTED' };
+function finalizePricing(context: ReservationContext): ReservationContext {
+  if (!context.pricing) return context;
+  if (context.pricing.total === undefined && context.pricing.currentPrice !== undefined) {
+    return {
+      ...context,
+      pricing: {
+        ...context.pricing,
+        subtotal: context.pricing.subtotal ?? context.pricing.currentPrice,
+        total: context.pricing.currentPrice
+      }
+    };
   }
-  return { ...context, status: 'CONFIRMED' };
+  return context;
+}
+
+function finalizeStatus(context: ReservationContext): ReservationContext {
+  const ctx = finalizePricing(context);
+  if (ctx.status === 'REJECTED' || ctx.status === 'FAILED') return ctx;
+  if (hasErrors(ctx)) {
+    return { ...ctx, status: 'REJECTED' };
+  }
+  return { ...ctx, status: 'CONFIRMED' };
 }
 
 function summarize(contexts: ReservationContext[]): BatchSummary {

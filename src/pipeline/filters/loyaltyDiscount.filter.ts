@@ -14,12 +14,13 @@ function rejectUninitializedPricing(context: ReservationContext): ReservationCon
 }
 
 function applyLoyaltyDiscount(pricing: PriceBreakdown, rate: number): PriceBreakdown {
-  const current = pricing.currentPrice ?? pricing.netPriceUsd ?? 0;
+  const current = pricing.currentPrice ?? 0;
   const discount = current * rate;
-  const newNet = current - discount;
+  const newCurrent = current - discount;
   return {
-    ...pricing, loyaltyDiscountUsd: discount, loyaltyDiscount: discount,
-    netPriceUsd: newNet, currentPrice: newNet, totalUsd: newNet, total: newNet
+    ...pricing,
+    loyaltyDiscount: discount,
+    currentPrice: newCurrent
   };
 }
 

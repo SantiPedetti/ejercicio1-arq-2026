@@ -4,17 +4,14 @@ import { Filter, FilterDependencies, FilterFactory } from '../filter';
 
 const FILTER = 'basePrice' as const;
 
-function calculatePricing(basePriceUsd: number, multiplier: number): PriceBreakdown {
-  const flightBasePriceUsd = basePriceUsd;
-  const classAdjustedPriceUsd = flightBasePriceUsd * multiplier;
+function calculatePricing(baseFare: number, multiplier: number): PriceBreakdown {
+  const classPrice = baseFare * multiplier;
   return {
-    flightBasePriceUsd, classAdjustedPriceUsd,
-    loyaltyDiscountUsd: 0, passengerTypeDiscountUsd: 0,
-    netPriceUsd: classAdjustedPriceUsd, taxesUsd: 0,
-    airportFeeUsd: 0, fuelSurchargeUsd: 0, totalUsd: classAdjustedPriceUsd,
-    baseFare: flightBasePriceUsd, classPrice: classAdjustedPriceUsd,
-    currentPrice: classAdjustedPriceUsd, loyaltyDiscount: 0, passengerTypeDiscount: 0,
-    subtotal: classAdjustedPriceUsd, taxes: 0, airportFee: 0, fuelSurcharge: 0, total: classAdjustedPriceUsd
+    baseFare,
+    classPrice,
+    currentPrice: classPrice,
+    loyaltyDiscount: 0,
+    passengerTypeDiscount: 0
   };
 }
 

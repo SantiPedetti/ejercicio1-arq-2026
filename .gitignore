@@ -8,3 +8,6 @@ tests/**/*.d.ts
 .env
 .env.local
 .DS_Store
+
+# Estado local de herramientas de agentes
+.claude-flow/

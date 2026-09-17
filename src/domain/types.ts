@@ -57,15 +57,6 @@ export interface PriceBreakdown {
   fuelSurcharge?: number;
   airportFee?: number;
   total?: number;
-  flightBasePriceUsd?: number;
-  classAdjustedPriceUsd?: number;
-  loyaltyDiscountUsd?: number;
-  passengerTypeDiscountUsd?: number;
-  netPriceUsd?: number;
-  taxesUsd?: number;
-  airportFeeUsd?: number;
-  fuelSurchargeUsd?: number;
-  totalUsd?: number;
 }
 
 export type RateSource = 'api' | 'cache' | 'fallback' | 'identity';

@@ -85,15 +85,16 @@ describe('filtro de conversion de moneda', () => {
   it('aplica la tasa obtenida sobre el total final', async () => {
     const context = contextWithFlight('LA4567');
     context.pricing = {
-      flightBasePriceUsd: 180,
-      classAdjustedPriceUsd: 180,
-      loyaltyDiscountUsd: 0,
-      passengerTypeDiscountUsd: 0,
-      netPriceUsd: 180,
-      taxesUsd: 21.6,
-      airportFeeUsd: 25,
-      fuelSurchargeUsd: 14.4,
-      totalUsd: 241
+      baseFare: 180,
+      classPrice: 180,
+      currentPrice: 180,
+      loyaltyDiscount: 0,
+      passengerTypeDiscount: 0,
+      subtotal: 180,
+      taxes: 21.6,
+      airportFee: 25,
+      fuelSurcharge: 14.4,
+      total: 241
     };
     context.currency = {
       baseCurrency: 'USD',
@@ -112,15 +113,16 @@ describe('filtro de conversion de moneda', () => {
   it('mantiene el total en USD con un warning si falta la metadata de moneda', async () => {
     const context = contextWithFlight('LA4567');
     context.pricing = {
-      flightBasePriceUsd: 180,
-      classAdjustedPriceUsd: 180,
-      loyaltyDiscountUsd: 0,
-      passengerTypeDiscountUsd: 0,
-      netPriceUsd: 180,
-      taxesUsd: 0,
-      airportFeeUsd: 0,
-      fuelSurchargeUsd: 0,
-      totalUsd: 180
+      baseFare: 180,
+      classPrice: 180,
+      currentPrice: 180,
+      loyaltyDiscount: 0,
+      passengerTypeDiscount: 0,
+      subtotal: 180,
+      taxes: 0,
+      airportFee: 0,
+      fuelSurcharge: 0,
+      total: 180
     };
 
     const result = await filter.execute(context);

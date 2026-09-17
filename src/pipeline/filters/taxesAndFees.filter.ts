@@ -5,16 +5,14 @@ import { Filter, FilterDependencies, FilterFactory } from '../filter';
 const FILTER = 'taxesAndFees' as const;
 
 function calculateTaxes(pricing: PriceBreakdown, taxes: FilterDependencies['config']['taxes']): PriceBreakdown {
-  const subtotal = pricing.currentPrice ?? pricing.netPriceUsd ?? 0;
-  const taxesUsd = subtotal * taxes.taxRate;
-  const airportFeeUsd = taxes.airportFeeUsd;
-  const baseFare = pricing.flightBasePriceUsd ?? pricing.baseFare ?? 0;
-  const fuelSurchargeUsd = baseFare * taxes.fuelSurchargeRate;
-  const totalUsd = subtotal + taxesUsd + airportFeeUsd + fuelSurchargeUsd;
+  const subtotal = pricing.currentPrice ?? 0;
+  const taxesAmount = subtotal * taxes.taxRate;
+  const airportFee = taxes.airportFeeUsd;
+  const classPrice = pricing.classPrice ?? pricing.baseFare ?? 0;
+  const fuelSurcharge = classPrice * taxes.fuelSurchargeRate;
+  const total = subtotal + taxesAmount + airportFee + fuelSurcharge;
   return {
-    ...pricing, subtotal, taxesUsd, taxes: taxesUsd,
-    airportFeeUsd, airportFee: airportFeeUsd,
-    fuelSurchargeUsd, fuelSurcharge: fuelSurchargeUsd, totalUsd, total: totalUsd
+    ...pricing, subtotal, taxes: taxesAmount, airportFee, fuelSurcharge, total
   };
 }
 

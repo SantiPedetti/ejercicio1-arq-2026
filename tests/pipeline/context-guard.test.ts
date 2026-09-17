@@ -5,15 +5,16 @@ describe('context-guard (validateContextInvariants)', () => {
   it('acepta un contexto con montos validos finitos y positivos', () => {
     const ctx = contextFor();
     ctx.pricing = {
-      flightBasePriceUsd: 100,
-      classAdjustedPriceUsd: 150,
-      loyaltyDiscountUsd: 0,
-      passengerTypeDiscountUsd: 0,
-      netPriceUsd: 150,
-      taxesUsd: 18,
-      airportFeeUsd: 25,
-      fuelSurchargeUsd: 8,
-      totalUsd: 201
+      baseFare: 100,
+      classPrice: 150,
+      loyaltyDiscount: 0,
+      passengerTypeDiscount: 0,
+      currentPrice: 150,
+      subtotal: 150,
+      taxes: 18,
+      airportFee: 25,
+      fuelSurcharge: 8,
+      total: 201
     };
 
     expect(validateContextInvariants(ctx, 'taxesAndFees')).toBeNull();
@@ -22,15 +23,16 @@ describe('context-guard (validateContextInvariants)', () => {
   it('detecta numeros negativos en el desglose de precios', () => {
     const ctx = contextFor();
     ctx.pricing = {
-      flightBasePriceUsd: -50,
-      classAdjustedPriceUsd: 100,
-      loyaltyDiscountUsd: 0,
-      passengerTypeDiscountUsd: 0,
-      netPriceUsd: 100,
-      taxesUsd: 0,
-      airportFeeUsd: 0,
-      fuelSurchargeUsd: 0,
-      totalUsd: 100
+      baseFare: -50,
+      classPrice: 100,
+      loyaltyDiscount: 0,
+      passengerTypeDiscount: 0,
+      currentPrice: 100,
+      subtotal: 100,
+      taxes: 0,
+      airportFee: 0,
+      fuelSurcharge: 0,
+      total: 100
     };
 
     const err = validateContextInvariants(ctx, 'basePrice');
@@ -40,15 +42,16 @@ describe('context-guard (validateContextInvariants)', () => {
   it('detecta valores NaN en los precios', () => {
     const ctx = contextFor();
     ctx.pricing = {
-      flightBasePriceUsd: Number.NaN,
-      classAdjustedPriceUsd: 100,
-      loyaltyDiscountUsd: 0,
-      passengerTypeDiscountUsd: 0,
-      netPriceUsd: 100,
-      taxesUsd: 0,
-      airportFeeUsd: 0,
-      fuelSurchargeUsd: 0,
-      totalUsd: 100
+      baseFare: Number.NaN,
+      classPrice: 100,
+      loyaltyDiscount: 0,
+      passengerTypeDiscount: 0,
+      currentPrice: 100,
+      subtotal: 100,
+      taxes: 0,
+      airportFee: 0,
+      fuelSurcharge: 0,
+      total: 100
     };
 
     const err = validateContextInvariants(ctx, 'basePrice');
@@ -58,15 +61,16 @@ describe('context-guard (validateContextInvariants)', () => {
   it('detecta valores Infinity en los precios', () => {
     const ctx = contextFor();
     ctx.pricing = {
-      flightBasePriceUsd: Number.POSITIVE_INFINITY,
-      classAdjustedPriceUsd: 100,
-      loyaltyDiscountUsd: 0,
-      passengerTypeDiscountUsd: 0,
-      netPriceUsd: 100,
-      taxesUsd: 0,
-      airportFeeUsd: 0,
-      fuelSurchargeUsd: 0,
-      totalUsd: 100
+      baseFare: Number.POSITIVE_INFINITY,
+      classPrice: 100,
+      loyaltyDiscount: 0,
+      passengerTypeDiscount: 0,
+      currentPrice: 100,
+      subtotal: 100,
+      taxes: 0,
+      airportFee: 0,
+      fuelSurcharge: 0,
+      total: 100
     };
 
     const err = validateContextInvariants(ctx, 'basePrice');

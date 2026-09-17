@@ -31,7 +31,7 @@ describe('POST /reservations/process', () => {
     expect(response.body.results[0]).toMatchObject({
       reservationId: 'R-001',
       status: 'CONFIRMED',
-      pricing: { totalUsd: 565 },
+      pricing: { total: 565 },
       currency: { targetCurrency: 'ARS' }
     });
     expect(response.body.results[0].trace).toHaveLength(8);
@@ -54,7 +54,7 @@ describe('POST /reservations/process', () => {
 
     expect(response.body.results[0].currency).toMatchObject({ targetCurrency: 'BRL', rate: 5.2 });
     expect(response.body.results[0].currency.convertedTotal).toBeCloseTo(
-      response.body.results[0].pricing.totalUsd * 5.2,
+      response.body.results[0].pricing.total * 5.2,
       1
     );
   });
@@ -102,7 +102,7 @@ describe('POST /reservations/process', () => {
     expect(response.body.results[0].status).toBe('CONFIRMED');
     expect(response.body.results[0].warnings[0].code).toBe('EXCHANGE_RATE_UNAVAILABLE');
     expect(response.body.results[0].currency).toMatchObject({ targetCurrency: 'USD', rate: 1 });
-    expect(response.body.results[0].pricing.totalUsd).toBeGreaterThan(0);
+    expect(response.body.results[0].pricing.total).toBeGreaterThan(0);
   });
 
   it('permite deshabilitar filtros solo para el request', async () => {
@@ -113,7 +113,7 @@ describe('POST /reservations/process', () => {
         config: { enabledFilters: { loyaltyDiscount: false } }
       });
 
-    expect(response.body.results[0].pricing.loyaltyDiscountUsd).toBe(0);
+    expect(response.body.results[0].pricing.loyaltyDiscount).toBe(0);
     expect(response.body.results[0].trace).toEqual(
       expect.arrayContaining([expect.objectContaining({ filter: 'loyaltyDiscount', status: 'SKIPPED' })])
     );

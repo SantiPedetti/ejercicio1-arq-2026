@@ -41,7 +41,7 @@ describe('PUT /pipeline/config', () => {
       .post('/reservations/process')
       .send({ reservations: [reservation({ passengerId: 'P007' })] });
 
-    expect(process.body.results[0].pricing.airportFeeUsd).toBe(40);
+    expect(process.body.results[0].pricing.airportFee).toBe(40);
     expect(process.body.results[0].currency.convertedTotal).toBeUndefined();
   });
 
