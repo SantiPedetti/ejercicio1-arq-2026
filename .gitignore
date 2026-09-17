@@ -11,3 +11,6 @@ tests/**/*.d.ts
 
 # Estado local de herramientas de agentes
 .claude-flow/
+
+# Evidencia generada por archify visual-check
+docs/architecture/*visual-check*
