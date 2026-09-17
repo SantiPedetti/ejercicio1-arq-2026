@@ -25,6 +25,27 @@ export interface ReservationResult {
   processedAt: string;
 }
 
+function projectPassenger(p: ReservationContext['passenger']) {
+  if (!p) return undefined;
+  return {
+    id: p.id,
+    fullName: `${p.firstName} ${p.lastName}`.trim(),
+    passengerType: p.passengerType,
+    loyaltyTier: p.loyaltyTier
+  };
+}
+
+function projectFlight(f: ReservationContext['flight']) {
+  if (!f) return undefined;
+  return {
+    flightCode: f.flightCode,
+    origin: f.origin,
+    destination: f.destination,
+    departureDate: f.departureDate,
+    destinationCountryCode: f.destinationCountryCode
+  };
+}
+
 /** Proyecta el contexto interno del pipeline al contrato publico de la API. */
 export function toReservationResult(context: ReservationContext, processedAt = new Date()): ReservationResult {
   const result: ReservationResult = {
@@ -35,28 +56,9 @@ export function toReservationResult(context: ReservationContext, processedAt = n
     trace: context.trace,
     processedAt: processedAt.toISOString()
   };
-
-  if (context.passenger) {
-    result.passenger = {
-      id: context.passenger.id,
-      fullName: `${context.passenger.firstName} ${context.passenger.lastName}`.trim(),
-      passengerType: context.passenger.passengerType,
-      loyaltyTier: context.passenger.loyaltyTier
-    };
-  }
-
-  if (context.flight) {
-    result.flight = {
-      flightCode: context.flight.flightCode,
-      origin: context.flight.origin,
-      destination: context.flight.destination,
-      departureDate: context.flight.departureDate,
-      destinationCountryCode: context.flight.destinationCountryCode
-    };
-  }
-
+  if (context.passenger) result.passenger = projectPassenger(context.passenger);
+  if (context.flight) result.flight = projectFlight(context.flight);
   if (context.pricing) result.pricing = context.pricing;
   if (context.currency) result.currency = context.currency;
-
   return result;
 }

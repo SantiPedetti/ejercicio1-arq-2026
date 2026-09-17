@@ -1,40 +1,55 @@
-import { addWarning, rejectReservation } from '../../domain/reservationContext';
+import { addWarning, rejectReservation, ReservationContext } from '../../domain/reservationContext';
 import { round2 } from '../../support/money';
-import { Filter, FilterFactory } from '../filter';
+import { Filter, FilterDependencies, FilterFactory } from '../filter';
 
-const FILTER: 'passengerTypeAdjustment' = 'passengerTypeAdjustment';
+const FILTER = 'passengerTypeAdjustment' as const;
 
-/**
- * Ajusta el precio neto segun el tipo de pasajero (child, adult, senior),
- * despues del descuento por lealtad.
- */
-export const createPassengerTypeAdjustmentFilter: FilterFactory = ({ config }): Filter => ({
-  name: FILTER,
-  execute(context) {
-    const pricing = context.pricing;
-    if (!pricing) {
-      return rejectReservation(
-        context,
-        FILTER,
-        'PRICING_NOT_INITIALIZED',
-        'No hay desglose de precios; el filtro de precio base debe ejecutarse antes'
-      );
+function rejectUninitializedPricing(context: ReservationContext): ReservationContext {
+  return rejectReservation(
+    context,
+    FILTER,
+    'PRICING_NOT_INITIALIZED',
+    'No hay desglose de precios; el filtro de precio base debe ejecutarse antes'
+  );
+}
+
+function applyTypeDiscount(
+  pricing: NonNullable<ReservationContext['pricing']>,
+  rate: number
+): void {
+  const discount = round2(pricing.netPriceUsd * rate);
+  pricing.passengerTypeDiscountUsd = discount;
+  pricing.netPriceUsd = round2(pricing.netPriceUsd - discount);
+  pricing.totalUsd = pricing.netPriceUsd;
+}
+
+function resolvePassengerTypeRate(
+  context: ReservationContext,
+  discounts: FilterDependencies['config']['passengerTypeDiscounts']
+): number | undefined {
+  const passengerType = context.passenger?.passengerType;
+  if (!passengerType) {
+    addWarning(context, FILTER, 'PASSENGER_NOT_RESOLVED', 'Sin pasajero resuelto no se aplica ajuste por tipo de pasajero');
+    return undefined;
+  }
+  return discounts[passengerType] ?? 0;
+}
+
+class PassengerTypeAdjustmentFilter implements Filter {
+  readonly name = FILTER;
+
+  constructor(private readonly config: FilterDependencies['config']) {}
+
+  execute(context: ReservationContext): ReservationContext {
+    if (!context.pricing) return rejectUninitializedPricing(context);
+    const rate = resolvePassengerTypeRate(context, this.config.passengerTypeDiscounts);
+    if (typeof rate === 'number') {
+      applyTypeDiscount(context.pricing, rate);
+      context.metadata.passengerTypeDiscountRate = rate;
     }
-
-    const passengerType = context.passenger?.passengerType;
-    if (!passengerType) {
-      addWarning(context, FILTER, 'PASSENGER_NOT_RESOLVED', 'Sin pasajero resuelto no se aplica ajuste por tipo de pasajero');
-      return context;
-    }
-
-    const rate = config.passengerTypeDiscounts[passengerType] ?? 0;
-    const discount = round2(pricing.netPriceUsd * rate);
-
-    pricing.passengerTypeDiscountUsd = discount;
-    pricing.netPriceUsd = round2(pricing.netPriceUsd - discount);
-    pricing.totalUsd = pricing.netPriceUsd;
-    context.metadata.passengerTypeDiscountRate = rate;
-
     return context;
   }
-});
+}
+
+export const createPassengerTypeAdjustmentFilter: FilterFactory = ({ config }) =>
+  new PassengerTypeAdjustmentFilter(config);

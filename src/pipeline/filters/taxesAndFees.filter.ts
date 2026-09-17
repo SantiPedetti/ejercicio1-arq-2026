@@ -1,18 +1,28 @@
-import { rejectReservation } from '../../domain/reservationContext';
+import { rejectReservation, ReservationContext } from '../../domain/reservationContext';
 import { round2 } from '../../support/money';
-import { Filter, FilterFactory } from '../filter';
+import { Filter, FilterDependencies, FilterFactory } from '../filter';
 
-const FILTER: 'taxesAndFees' = 'taxesAndFees';
+const FILTER = 'taxesAndFees' as const;
 
-/**
- * Cierra el calculo en USD: impuestos sobre el precio neto, tasa fija de
- * aeropuerto y sobrecargo por combustible sobre el precio base del vuelo.
- */
-export const createTaxesAndFeesFilter: FilterFactory = ({ config }): Filter => ({
-  name: FILTER,
-  execute(context) {
-    const pricing = context.pricing;
-    if (!pricing) {
+function calculateTaxes(
+  pricing: NonNullable<ReservationContext['pricing']>,
+  taxes: FilterDependencies['config']['taxes']
+): void {
+  pricing.taxesUsd = round2(pricing.netPriceUsd * taxes.taxRate);
+  pricing.airportFeeUsd = round2(taxes.airportFeeUsd);
+  pricing.fuelSurchargeUsd = round2(pricing.flightBasePriceUsd * taxes.fuelSurchargeRate);
+  pricing.totalUsd = round2(
+    pricing.netPriceUsd + pricing.taxesUsd + pricing.airportFeeUsd + pricing.fuelSurchargeUsd
+  );
+}
+
+class TaxesAndFeesFilter implements Filter {
+  readonly name = FILTER;
+
+  constructor(private readonly config: FilterDependencies['config']) {}
+
+  execute(context: ReservationContext): ReservationContext {
+    if (!context.pricing) {
       return rejectReservation(
         context,
         FILTER,
@@ -20,16 +30,9 @@ export const createTaxesAndFeesFilter: FilterFactory = ({ config }): Filter => (
         'No hay desglose de precios; el filtro de precio base debe ejecutarse antes'
       );
     }
-
-    const { taxRate, airportFeeUsd, fuelSurchargeRate } = config.taxes;
-
-    pricing.taxesUsd = round2(pricing.netPriceUsd * taxRate);
-    pricing.airportFeeUsd = round2(airportFeeUsd);
-    pricing.fuelSurchargeUsd = round2(pricing.flightBasePriceUsd * fuelSurchargeRate);
-    pricing.totalUsd = round2(
-      pricing.netPriceUsd + pricing.taxesUsd + pricing.airportFeeUsd + pricing.fuelSurchargeUsd
-    );
-
+    calculateTaxes(context.pricing, this.config.taxes);
     return context;
   }
-});
+}
+
+export const createTaxesAndFeesFilter: FilterFactory = ({ config }) => new TaxesAndFeesFilter(config);

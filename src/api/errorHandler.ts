@@ -1,4 +1,4 @@
-import { ErrorRequestHandler, RequestHandler } from 'express';
+import { ErrorRequestHandler, Request, RequestHandler, Response } from 'express';
 import { Logger } from '../support/logger';
 
 export class HttpError extends Error {
@@ -19,32 +19,43 @@ export const notFoundHandler: RequestHandler = (req, res) => {
   });
 };
 
+function handleHttpError(error: HttpError, res: Response): void {
+  res.status(error.statusCode).json({
+    error: { code: error.code, message: error.message, details: error.details }
+  });
+}
+
+function handleSyntaxError(error: unknown, res: Response): boolean {
+  const syntaxError = error as { type?: string };
+  if (syntaxError?.type === 'entity.parse.failed') {
+    res.status(400).json({
+      error: { code: 'MALFORMED_JSON', message: 'El cuerpo del request no es JSON valido' }
+    });
+    return true;
+  }
+  return false;
+}
+
+function handleUnknownError(error: unknown, req: Request, res: Response, logger: Logger): void {
+  const message = error instanceof Error ? error.message : String(error);
+  logger.error('Error no controlado en la capa HTTP', { path: req.originalUrl, error: message });
+  res.status(500).json({
+    error: { code: 'INTERNAL_ERROR', message: 'Error interno al procesar el request' }
+  });
+}
+
 /**
  * Frontera de errores de la capa HTTP: traduce fallos a respuestas JSON
  * uniformes y evita que una excepcion tumbe el proceso.
  */
 export function createErrorHandler(logger: Logger): ErrorRequestHandler {
   return (error, req, res, _next) => {
+    void _next;
     if (error instanceof HttpError) {
-      res.status(error.statusCode).json({
-        error: { code: error.code, message: error.message, details: error.details }
-      });
+      handleHttpError(error, res);
       return;
     }
-
-    // Body JSON malformado: express lanza un SyntaxError con status 400.
-    const syntaxError = error as { type?: string; status?: number; message?: string };
-    if (syntaxError?.type === 'entity.parse.failed') {
-      res.status(400).json({
-        error: { code: 'MALFORMED_JSON', message: 'El cuerpo del request no es JSON valido' }
-      });
-      return;
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error('Error no controlado en la capa HTTP', { path: req.originalUrl, error: message });
-    res.status(500).json({
-      error: { code: 'INTERNAL_ERROR', message: 'Error interno al procesar el request' }
-    });
+    if (handleSyntaxError(error, res)) return;
+    handleUnknownError(error, req, res, logger);
   };
 }

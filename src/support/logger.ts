@@ -1,3 +1,6 @@
+import pino from 'pino';
+import { env } from '../config/env';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface Logger {
@@ -7,33 +10,39 @@ export interface Logger {
   error(message: string, meta?: Record<string, unknown>): void;
 }
 
-const LEVEL_WEIGHT: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-
-function emit(level: LogLevel, minLevel: LogLevel, message: string, meta?: Record<string, unknown>): void {
-  if (LEVEL_WEIGHT[level] < LEVEL_WEIGHT[minLevel]) return;
-  const line = { level, message, ...meta };
-  if (level === 'error') console.error(JSON.stringify(line));
-  else if (level === 'warn') console.warn(JSON.stringify(line));
-  else console.log(JSON.stringify(line));
+function resolveLevel(minLevel?: LogLevel | 'silent'): string {
+  if (minLevel) return minLevel;
+  return process.env.NODE_ENV === 'test' ? 'silent' : env.LOG_LEVEL;
 }
 
-export function createLogger(minLevel: LogLevel = 'info'): Logger {
+function logWithPino(
+  instance: pino.Logger,
+  level: LogLevel,
+  message: string,
+  meta?: Record<string, unknown>
+): void {
+  if (meta) {
+    instance[level](meta, message);
+  } else {
+    instance[level](message);
+  }
+}
+
+export function createLogger(minLevel?: LogLevel | 'silent'): Logger {
+  const pinoInstance = pino({
+    level: resolveLevel(minLevel),
+    timestamp: pino.stdTimeFunctions.isoTime
+  });
+
   return {
-    debug: (message, meta) => emit('debug', minLevel, message, meta),
-    info: (message, meta) => emit('info', minLevel, message, meta),
-    warn: (message, meta) => emit('warn', minLevel, message, meta),
-    error: (message, meta) => emit('error', minLevel, message, meta)
+    debug: (msg, meta) => logWithPino(pinoInstance, 'debug', msg, meta),
+    info: (msg, meta) => logWithPino(pinoInstance, 'info', msg, meta),
+    warn: (msg, meta) => logWithPino(pinoInstance, 'warn', msg, meta),
+    error: (msg, meta) => logWithPino(pinoInstance, 'error', msg, meta)
   };
 }
 
 /** Logger inerte, util en pruebas unitarias de filtros. */
-export const silentLogger: Logger = {
-  debug: () => undefined,
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined
-};
+export const silentLogger: Logger = createLogger('silent');
 
-export const logger: Logger = createLogger(
-  (process.env.LOG_LEVEL as LogLevel | undefined) ?? (process.env.NODE_ENV === 'test' ? 'error' : 'info')
-);
+export const logger: Logger = createLogger();

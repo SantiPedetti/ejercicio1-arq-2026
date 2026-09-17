@@ -3,6 +3,7 @@ import {
   PipelineConfigPatch,
   PipelineConfigStore
 } from '../config/pipelineConfig';
+import { ReservationContext } from '../domain/reservationContext';
 import { ReservationRequest } from '../domain/types';
 import { FilterDependencies } from '../pipeline/filter';
 import { BatchSummary } from '../pipeline/pipeline';
@@ -65,15 +66,13 @@ export class ReservationProcessingService {
     this.ratesCache = new RatesCache(this.configStore.get().exchangeRate.cacheTtlMs);
   }
 
-  async processBatch(
-    requests: ReservationRequest[],
-    overrides?: PipelineConfigPatch
-  ): Promise<ProcessBatchResponse> {
-    const config = overrides
-      ? new PipelineConfigStore(this.configStore.get()).update(overrides)
-      : this.configStore.get();
+  private resolveConfig(overrides?: PipelineConfigPatch): PipelineConfig {
+    if (!overrides) return this.configStore.get();
+    return new PipelineConfigStore(this.configStore.get()).update(overrides);
+  }
 
-    const deps: FilterDependencies = {
+  private buildFilterDeps(config: PipelineConfig): FilterDependencies {
+    return {
       config,
       passengers: this.passengers,
       flights: this.flights,
@@ -81,24 +80,35 @@ export class ReservationProcessingService {
       logger: this.logger,
       now: this.now
     };
+  }
 
-    const batch = await createPipeline(config, deps).processBatch(requests);
-    const results = batch.contexts.map((context) => toReservationResult(context, this.now()));
-    this.store.saveAll(results);
-
+  private logBatch(batch: { summary: BatchSummary; processingTimeMs: number }): void {
     this.logger.info('Lote de reservas procesado', {
       total: batch.summary.total,
       rejected: batch.summary.rejected,
       failed: batch.summary.failed,
       processingTimeMs: batch.processingTimeMs
     });
+  }
 
-    return {
-      results,
-      summary: batch.summary,
-      processingTimeMs: batch.processingTimeMs,
-      appliedConfig: config
-    };
+  private storeBatchResults(contexts: ReservationContext[]): ReservationResult[] {
+    const results = contexts.map((ctx) => toReservationResult(ctx, this.now()));
+    this.store.saveAll(results);
+    return results;
+  }
+
+  async processBatch(
+    requests: ReservationRequest[],
+    overrides?: PipelineConfigPatch,
+    correlationId?: string
+  ): Promise<ProcessBatchResponse> {
+    const config = this.resolveConfig(overrides);
+    const deps = this.buildFilterDeps(config);
+    const batch = await createPipeline(config, deps).processBatch(requests, correlationId);
+    const results = this.storeBatchResults(batch.contexts);
+    this.logBatch(batch);
+    const { summary, processingTimeMs } = batch;
+    return { results, summary, processingTimeMs, appliedConfig: config };
   }
 
   findResult(reservationId: string): ReservationResult | undefined {

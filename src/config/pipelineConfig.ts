@@ -1,3 +1,4 @@
+import { env } from './env';
 import { LoyaltyTier, PassengerType, SeatClass } from '../domain/types';
 
 export const FILTER_NAMES = [
@@ -79,7 +80,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   },
   exchangeRate: {
     baseCurrency: 'USD',
-    apiBaseUrl: 'https://api.exchangerate-api.com/v4/latest',
+    apiBaseUrl: env.EXCHANGE_API_BASE_URL,
     timeoutMs: 5000,
     maxRetries: 3,
     retryDelayMs: 200,
@@ -111,8 +112,19 @@ export type PipelineConfigPatch = {
   loyaltyDiscounts?: Partial<Record<LoyaltyTier, number>>;
   passengerTypeDiscounts?: Partial<Record<PassengerType, number>>;
   taxes?: Partial<TaxSettings>;
-  exchangeRate?: Partial<ExchangeRateSettings>;
+  exchangeRate?: Partial<Omit<ExchangeRateSettings, 'apiBaseUrl'>>;
 };
+
+function mergeExchangeRate(
+  current: ExchangeRateSettings,
+  patch?: Partial<Omit<ExchangeRateSettings, 'apiBaseUrl'>>
+): ExchangeRateSettings {
+  return {
+    ...current,
+    ...patch,
+    fallbackRates: { ...current.fallbackRates, ...patch?.fallbackRates }
+  };
+}
 
 /**
  * Configuracion viva del pipeline. Es mutable en tiempo de ejecucion porque el
@@ -132,22 +144,15 @@ export class PipelineConfigStore {
 
   /** Aplica un parche parcial y devuelve la configuracion resultante. */
   update(patch: PipelineConfigPatch): PipelineConfig {
-    const current = this.config;
+    const cur = this.config;
     this.config = {
-      filterOrder: patch.filterOrder ? [...patch.filterOrder] : current.filterOrder,
-      enabledFilters: { ...current.enabledFilters, ...patch.enabledFilters },
-      seatClassMultipliers: { ...current.seatClassMultipliers, ...patch.seatClassMultipliers },
-      loyaltyDiscounts: { ...current.loyaltyDiscounts, ...patch.loyaltyDiscounts },
-      passengerTypeDiscounts: { ...current.passengerTypeDiscounts, ...patch.passengerTypeDiscounts },
-      taxes: { ...current.taxes, ...patch.taxes },
-      exchangeRate: {
-        ...current.exchangeRate,
-        ...patch.exchangeRate,
-        fallbackRates: {
-          ...current.exchangeRate.fallbackRates,
-          ...patch.exchangeRate?.fallbackRates
-        }
-      }
+      filterOrder: patch.filterOrder ? [...patch.filterOrder] : cur.filterOrder,
+      enabledFilters: { ...cur.enabledFilters, ...patch.enabledFilters },
+      seatClassMultipliers: { ...cur.seatClassMultipliers, ...patch.seatClassMultipliers },
+      loyaltyDiscounts: { ...cur.loyaltyDiscounts, ...patch.loyaltyDiscounts },
+      passengerTypeDiscounts: { ...cur.passengerTypeDiscounts, ...patch.passengerTypeDiscounts },
+      taxes: { ...cur.taxes, ...patch.taxes },
+      exchangeRate: mergeExchangeRate(cur.exchangeRate, patch.exchangeRate)
     };
     return this.get();
   }

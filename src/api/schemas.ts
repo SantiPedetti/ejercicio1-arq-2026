@@ -41,7 +41,6 @@ export const pipelineConfigPatchSchema = z
     exchangeRate: z
       .object({
         baseCurrency: z.string().trim().length(3).optional(),
-        apiBaseUrl: z.string().url().optional(),
         timeoutMs: z.number().int().min(100).max(30000).optional(),
         maxRetries: z.number().int().min(1).max(10).optional(),
         retryDelayMs: z.number().int().min(0).max(10000).optional(),

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { FilterName } from '../config/pipelineConfig';
 import {
   addError,
@@ -45,62 +46,111 @@ export class Pipeline {
     this.logger = options.logger ?? silentLogger;
   }
 
-  async process(context: ReservationContext): Promise<ReservationContext> {
+  async process(context: ReservationContext, correlationId?: string): Promise<ReservationContext> {
+    const cid = correlationId ?? randomUUID();
+    let current = context;
     for (const filter of this.filters) {
-      if (this.enabledFilters[filter.name] === false) {
-        context.trace.push({ filter: filter.name, status: 'disabled', durationMs: 0 });
-        continue;
-      }
-
-      if (context.aborted && filter.runOnAborted !== true) {
-        context.trace.push({
-          filter: filter.name,
-          status: 'skipped',
-          durationMs: 0,
-          detail: 'La reserva fue rechazada por un filtro anterior'
-        });
-        continue;
-      }
-
-      const startedAt = performance.now();
-      try {
-        context = await filter.execute(context);
-        context.trace.push({
-          filter: filter.name,
-          status: 'executed',
-          durationMs: round(performance.now() - startedAt)
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        addError(context, filter.name, 'FILTER_EXCEPTION', `El filtro fallo de forma inesperada: ${message}`);
-        context.status = 'failed';
-        context.aborted = true;
-        context.trace.push({
-          filter: filter.name,
-          status: 'failed',
-          durationMs: round(performance.now() - startedAt),
-          detail: message
-        });
-        this.logger.error('Excepcion no controlada en un filtro del pipeline', {
-          filter: filter.name,
-          reservationId: context.request.reservationId,
-          error: message
-        });
-      }
+      current = await this.runStep(current, filter, cid);
     }
-
-    return finalizeStatus(context);
+    return finalizeStatus(current);
   }
 
-  /** Procesa un lote completo; cada reserva es independiente de las demas. */
-  async processBatch(requests: ReservationRequest[]): Promise<BatchResult> {
+  private async runStep(
+    ctx: ReservationContext,
+    filter: Filter,
+    cid: string
+  ): Promise<ReservationContext> {
+    if (this.enabledFilters[filter.name] === false) {
+      return this.recordSkip(ctx, filter, cid, 'disabled');
+    }
+    if (ctx.aborted && filter.runOnAborted !== true) {
+      return this.recordSkip(ctx, filter, cid, 'skipped', 'La reserva fue rechazada por un filtro anterior');
+    }
+    return this.executeFilter(ctx, filter, cid);
+  }
+
+  private recordSkip(
+    ctx: ReservationContext,
+    f: Filter,
+    cid: string,
+    status: 'disabled' | 'skipped',
+    detail?: string
+  ): ReservationContext {
+    ctx.trace.push({ filter: f.name, status, durationMs: 0, ...(detail ? { detail } : {}) });
+    this.logStep(ctx.request.reservationId, cid, f.name, status, 0);
+    return ctx;
+  }
+
+  private recordSuccess(
+    next: ReservationContext,
+    filterName: FilterName,
+    cid: string,
+    durationMs: number
+  ): ReservationContext {
+    next.trace.push({ filter: filterName, status: 'executed', durationMs });
+    this.logStep(next.request.reservationId, cid, filterName, 'executed', durationMs);
+    return next;
+  }
+
+  private async executeFilter(
+    ctx: ReservationContext,
+    f: Filter,
+    cid: string
+  ): Promise<ReservationContext> {
+    const start = performance.now();
+    try {
+      const next = await f.execute(ctx);
+      return this.recordSuccess(next, f.name, cid, round(performance.now() - start));
+    } catch (err) {
+      return this.handleFilterError(ctx, f, cid, err, round(performance.now() - start));
+    }
+  }
+
+  private logFilterFailure(
+    reservationId: string,
+    correlationId: string,
+    filter: FilterName,
+    durationMs: number,
+    error: string
+  ): void {
+    const meta = { pipeline: 'flight-reservation', reservationId, correlationId, filter, status: 'failed', durationMs, error };
+    this.logger.error('Excepcion no controlada en un filtro del pipeline', meta);
+  }
+
+  private handleFilterError(
+    ctx: ReservationContext,
+    f: Filter,
+    cid: string,
+    err: unknown,
+    durationMs: number
+  ): ReservationContext {
+    const msg = err instanceof Error ? err.message : String(err);
+    addError(ctx, f.name, 'FILTER_EXCEPTION', `El filtro fallo de forma inesperada: ${msg}`);
+    ctx.status = 'failed';
+    ctx.aborted = true;
+    ctx.trace.push({ filter: f.name, status: 'failed', durationMs, detail: msg });
+    this.logFilterFailure(ctx.request.reservationId, cid, f.name, durationMs, msg);
+    return ctx;
+  }
+
+  private logStep(
+    reservationId: string,
+    correlationId: string,
+    filter: FilterName,
+    status: string,
+    durationMs: number
+  ): void {
+    const meta = { pipeline: 'flight-reservation', reservationId, correlationId, filter, status, durationMs };
+    this.logger.info('Filtro del pipeline procesado', meta);
+  }
+
+  async processBatch(requests: ReservationRequest[], correlationId?: string): Promise<BatchResult> {
+    const cid = correlationId ?? randomUUID();
     const startedAt = performance.now();
     const contexts: ReservationContext[] = [];
-
-    for (const request of requests) {
-      contexts.push(await this.process(createContext(request)));
+    for (const req of requests) {
+      contexts.push(await this.process(createContext(req), cid));
     }
-
     return {
       contexts,
       summary: summarize(contexts),
@@ -120,17 +170,15 @@ function finalizeStatus(context: ReservationContext): ReservationContext {
 }
 
 function summarize(contexts: ReservationContext[]): BatchSummary {
-  return contexts.reduce<BatchSummary>(
-    (summary, context) => {
-      summary.total += 1;
-      if (context.status === 'processed') summary.processed += 1;
-      else if (context.status === 'processed_with_warnings') summary.processedWithWarnings += 1;
-      else if (context.status === 'rejected') summary.rejected += 1;
-      else if (context.status === 'failed') summary.failed += 1;
-      return summary;
-    },
-    { total: 0, processed: 0, processedWithWarnings: 0, rejected: 0, failed: 0 }
-  );
+  const summary: BatchSummary = { total: 0, processed: 0, processedWithWarnings: 0, rejected: 0, failed: 0 };
+  for (const ctx of contexts) {
+    summary.total += 1;
+    if (ctx.status === 'processed') summary.processed += 1;
+    else if (ctx.status === 'processed_with_warnings') summary.processedWithWarnings += 1;
+    else if (ctx.status === 'rejected') summary.rejected += 1;
+    else if (ctx.status === 'failed') summary.failed += 1;
+  }
+  return summary;
 }
 
 function round(value: number): number {

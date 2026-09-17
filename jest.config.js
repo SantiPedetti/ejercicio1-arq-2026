@@ -6,6 +6,12 @@ module.exports = {
   testMatch: ['**/*.test.ts'],
   clearMocks: true,
   collectCoverageFrom: ['src/**/*.ts', '!src/server.ts'],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      lines: 80
+    }
+  },
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: { module: 'commonjs' } }]
   }
