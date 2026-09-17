@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+tests/**/*.js
+tests/**/*.js.map
+tests/**/*.d.ts
+*.log
+.env
+.env.local
+.DS_Store

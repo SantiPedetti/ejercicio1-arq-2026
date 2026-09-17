@@ -1,0 +1,34 @@
+{
+  "name": "flight-reservation-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de procesamiento de reservas de vuelos con el patron arquitectonico Pipes & Filters",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "zod": "4.6.1"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.5",
+    "@types/jest": "30.0.0",
+    "@types/node": "24.10.1",
+    "@types/supertest": "6.0.3",
+    "jest": "30.5.1",
+    "supertest": "7.2.2",
+    "ts-jest": "29.4.12",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}
