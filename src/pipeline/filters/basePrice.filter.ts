@@ -37,8 +37,8 @@ function resolveMultiplier(
 }
 
 function applyBasePricing(context: ReservationContext, multiplier: number): void {
-  const seats = context.request.seats ?? 1;
-  const basePrice = context.flight?.basePriceUsd ?? 0;
+  const seats = 1;
+  const basePrice = context.flight?.baseFare ?? context.flight?.basePriceUsd ?? 0;
   context.pricing = calculatePricing(basePrice, seats, multiplier);
   context.metadata.seatClassMultiplier = multiplier;
   context.metadata.seats = seats;

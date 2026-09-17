@@ -37,7 +37,7 @@ describe('orquestador del pipeline', () => {
 
     expect(calls).toEqual(['basePrice', 'loyaltyDiscount', 'taxesAndFees']);
     expect(context.trace.map((entry) => entry.status)).toEqual(['executed', 'executed', 'executed']);
-    expect(context.status).toBe('processed');
+    expect(context.status).toBe('CONFIRMED');
   });
 
   it('no ejecuta un filtro deshabilitado y lo deja marcado en la traza', async () => {
@@ -66,7 +66,7 @@ describe('orquestador del pipeline', () => {
     const context = await pipeline.process(createContext(reservation()));
 
     expect(calls).toEqual([]);
-    expect(context.status).toBe('rejected');
+    expect(context.status).toBe('REJECTED');
     expect(context.trace[1]).toMatchObject({ filter: 'basePrice', status: 'skipped' });
   });
 
@@ -82,7 +82,7 @@ describe('orquestador del pipeline', () => {
 
     const context = await pipeline.process(createContext(reservation()));
 
-    expect(context.status).toBe('failed');
+    expect(context.status).toBe('FAILED');
     expect(context.issues).toEqual([
       expect.objectContaining({ code: 'FILTER_EXCEPTION', filter: 'exchangeRateEnrichment', severity: 'error' })
     ]);
@@ -90,7 +90,7 @@ describe('orquestador del pipeline', () => {
     expect(calls).toEqual([]);
   });
 
-  it('marca la reserva como procesada con warnings cuando hay avisos no bloqueantes', async () => {
+  it('mantiene la reserva como CONFIRMED cuando hay solo avisos (warnings)', async () => {
     const warning: Filter = {
       name: 'exchangeRateEnrichment',
       execute: (context) => addWarning(context, 'exchangeRateEnrichment', 'EXCHANGE_RATE_FALLBACK', 'tasa de respaldo')
@@ -99,15 +99,16 @@ describe('orquestador del pipeline', () => {
 
     const context = await pipeline.process(createContext(reservation()));
 
-    expect(context.status).toBe('processed_with_warnings');
+    expect(context.status).toBe('CONFIRMED');
   });
 
   it('procesa el lote completo aunque una reserva falle y resume los estados', async () => {
     const conditional: Filter = {
       name: 'validatePassenger',
       execute: (context) => {
-        if (context.request.reservationId === 'R-BOOM') throw new Error('datos corruptos');
-        if (context.request.reservationId === 'R-BAD') {
+        const id = context.request.id || context.request.reservationId;
+        if (id === 'R-BOOM') throw new Error('datos corruptos');
+        if (id === 'R-BAD') {
           return rejectReservation(context, 'validatePassenger', 'PASSENGER_NOT_FOUND', 'no existe');
         }
         return context;
@@ -116,19 +117,18 @@ describe('orquestador del pipeline', () => {
     const pipeline = new Pipeline([conditional], { enabledFilters: allEnabled });
 
     const batch = await pipeline.processBatch([
-      reservation({ reservationId: 'R-OK' }),
-      reservation({ reservationId: 'R-BOOM' }),
-      reservation({ reservationId: 'R-BAD' })
+      reservation({ id: 'R-OK' }),
+      reservation({ id: 'R-BOOM' }),
+      reservation({ id: 'R-BAD' })
     ]);
 
     expect(batch.summary).toEqual({
       total: 3,
-      processed: 1,
-      processedWithWarnings: 0,
+      confirmed: 1,
       rejected: 1,
       failed: 1
     });
     expect(batch.processingTimeMs).toBeGreaterThanOrEqual(0);
-    expect(batch.contexts.map((context) => context.status)).toEqual(['processed', 'failed', 'rejected']);
+    expect(batch.contexts.map((context) => context.status)).toEqual(['CONFIRMED', 'FAILED', 'REJECTED']);
   });
 });

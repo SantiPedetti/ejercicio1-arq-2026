@@ -6,10 +6,12 @@ export interface PassengerRepository {
   findAll(): Passenger[];
 }
 
-/** Indice por id construido al cargar la aplicacion para busquedas O(1). */
-const byId = new Map<string, Passenger>(mockPassengers.map((passenger) => [passenger.id, passenger]));
+export function createPassengerRepository(passengers: Passenger[] = mockPassengers): PassengerRepository {
+  const byId = new Map<string, Passenger>(passengers.map((p) => [p.id, p]));
+  return {
+    findById: (id) => byId.get(id),
+    findAll: () => [...passengers]
+  };
+}
 
-export const passengerRepository: PassengerRepository = {
-  findById: (id) => byId.get(id),
-  findAll: () => [...mockPassengers]
-};
+export const passengerRepository: PassengerRepository = createPassengerRepository();

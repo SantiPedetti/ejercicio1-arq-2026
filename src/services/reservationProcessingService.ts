@@ -1,16 +1,19 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { singleReservationSchema } from '../api/schemas';
 import {
   PipelineConfig,
   PipelineConfigPatch,
   PipelineConfigStore
 } from '../config/pipelineConfig';
-import { ReservationContext } from '../domain/reservationContext';
+import { createContext } from '../domain/reservationContext';
 import { ReservationRequest } from '../domain/types';
 import { FilterDependencies } from '../pipeline/filter';
-import { BatchSummary } from '../pipeline/pipeline';
+import { BatchSummary, Pipeline } from '../pipeline/pipeline';
 import { createPipeline } from '../pipeline/registry';
 import { flightRepository, FlightRepository } from '../repositories/flightRepository';
 import { passengerRepository, PassengerRepository } from '../repositories/passengerRepository';
-import { ProcessingStore } from '../store/processingStore';
+import { ProcessingStore, ReservationStatusEntry } from '../store/processingStore';
 import { Logger, silentLogger } from '../support/logger';
 import { ExchangeRateApiClient, FetchLike } from './exchangeRate/exchangeRateApiClient';
 import { ExchangeRateProvider } from './exchangeRate/exchangeRateProvider';
@@ -21,7 +24,6 @@ export interface ProcessBatchResponse {
   results: ReservationResult[];
   summary: BatchSummary;
   processingTimeMs: number;
-  /** Configuracion efectivamente usada, incluyendo overrides del request. */
   appliedConfig: PipelineConfig;
 }
 
@@ -31,18 +33,50 @@ export interface ReservationProcessingServiceDeps {
   logger?: Logger;
   passengers?: PassengerRepository;
   flights?: FlightRepository;
-  /** Permite sustituir el proveedor completo (pruebas, otro proveedor). */
   exchangeRateProvider?: ExchangeRateProvider;
-  /** Permite sustituir solo el transporte HTTP manteniendo el cliente real. */
   fetchFn?: FetchLike;
   now?: () => Date;
 }
 
-/**
- * Compone el pipeline con la configuracion vigente y procesa lotes de reservas.
- * La cache de tasas es propiedad del servicio para que sobreviva entre
- * requests, aunque el cliente se reconstruya al cambiar la configuracion.
- */
+function extractId(raw: unknown): string {
+  if (raw && typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.id === 'string' && obj.id.trim().length > 0) return obj.id;
+    if (typeof obj.reservationId === 'string' && obj.reservationId.trim().length > 0) return obj.reservationId;
+  }
+  return randomUUID();
+}
+
+function formatIssues(error?: z.ZodError): string | undefined {
+  if (!error) return undefined;
+  return error.issues.map((i) => `${i.path.join('.') || 'root'}: ${i.message}`).join(', ');
+}
+
+function buildInvalidResult(id: string, now: Date, error?: z.ZodError): ReservationResult {
+  const details = formatIssues(error);
+  const message = details
+    ? `La reserva no cumple el contrato esperado: ${details}`
+    : 'La reserva no cumple el contrato esperado';
+  return {
+    reservationId: id,
+    status: 'REJECTED',
+    errors: [{ filter: 'source', code: 'INVALID_RESERVATION', message, severity: 'error', details: error?.issues }],
+    warnings: [],
+    trace: [],
+    processedAt: now.toISOString()
+  };
+}
+
+function summarizeBatch(results: ReservationResult[]): BatchSummary {
+  const summary: BatchSummary = { total: results.length, confirmed: 0, rejected: 0, failed: 0 };
+  for (const r of results) {
+    if (r.status === 'CONFIRMED') summary.confirmed += 1;
+    else if (r.status === 'REJECTED') summary.rejected += 1;
+    else if (r.status === 'FAILED') summary.failed += 1;
+  }
+  return summary;
+}
+
 export class ReservationProcessingService {
   private readonly configStore: PipelineConfigStore;
   private readonly store: ProcessingStore;
@@ -91,28 +125,51 @@ export class ReservationProcessingService {
     });
   }
 
-  private storeBatchResults(contexts: ReservationContext[]): ReservationResult[] {
-    const results = contexts.map((ctx) => toReservationResult(ctx, this.now()));
-    this.store.saveAll(results);
+  private async processItem(raw: unknown, pipeline: Pipeline, cid?: string): Promise<ReservationResult> {
+    const id = extractId(raw);
+    this.store.saveStatus({ reservationId: id, status: 'PROCESSING', updatedAt: this.now().toISOString() });
+    const parsed = singleReservationSchema.safeParse(raw);
+    if (!parsed.success) {
+      const res = buildInvalidResult(id, this.now(), parsed.error);
+      this.store.saveResult(res, this.now().toISOString());
+      return res;
+    }
+    const req: ReservationRequest = { ...parsed.data, id, reservationId: id };
+    const ctx = await pipeline.process(createContext(req), cid);
+    const result = toReservationResult(ctx, this.now());
+    this.store.saveResult(result, this.now().toISOString());
+    return result;
+  }
+
+  private async executeBatch(items: unknown[], pipeline: Pipeline, cid?: string): Promise<ReservationResult[]> {
+    const results: ReservationResult[] = [];
+    for (const item of items) {
+      results.push(await this.processItem(item, pipeline, cid));
+    }
     return results;
   }
 
   async processBatch(
-    requests: ReservationRequest[],
+    items: unknown[],
     overrides?: PipelineConfigPatch,
-    correlationId?: string
+    cid?: string
   ): Promise<ProcessBatchResponse> {
+    const startedAt = performance.now();
     const config = this.resolveConfig(overrides);
-    const deps = this.buildFilterDeps(config);
-    const batch = await createPipeline(config, deps).processBatch(requests, correlationId);
-    const results = this.storeBatchResults(batch.contexts);
-    this.logBatch(batch);
-    const { summary, processingTimeMs } = batch;
+    const pipeline = createPipeline(config, this.buildFilterDeps(config));
+    const results = await this.executeBatch(items, pipeline, cid);
+    const summary = summarizeBatch(results);
+    const processingTimeMs = Math.round((performance.now() - startedAt) * 100) / 100;
+    this.logBatch({ summary, processingTimeMs });
     return { results, summary, processingTimeMs, appliedConfig: config };
   }
 
-  findResult(reservationId: string): ReservationResult | undefined {
+  findStatus(reservationId: string): ReservationStatusEntry | undefined {
     return this.store.find(reservationId);
+  }
+
+  findResult(reservationId: string): ReservationResult | undefined {
+    return this.store.findResult(reservationId);
   }
 
   invalidateRatesCache(): void {

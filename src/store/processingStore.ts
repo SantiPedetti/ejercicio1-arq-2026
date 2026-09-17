@@ -1,31 +1,56 @@
+import { ReservationStatus } from '../domain/reservationContext';
 import { ReservationResult } from '../services/reservationResult';
 
-/**
- * Almacen en memoria del ultimo resultado de procesamiento por reserva, que
- * sostiene el endpoint GET /reservations/:id/status. Se pierde al reiniciar el
- * proceso: es una decision deliberada del alcance del ejercicio.
- */
+export interface ReservationStatusEntry {
+  reservationId: string;
+  status: ReservationStatus;
+  updatedAt: string;
+  result?: ReservationResult;
+}
+
 export class ProcessingStore {
-  private readonly results = new Map<string, ReservationResult>();
+  private static readonly MAX_ENTRIES = 1000;
+  private readonly entries = new Map<string, ReservationStatusEntry>();
 
-  save(result: ReservationResult): void {
-    this.results.set(result.reservationId, result);
+  saveStatus(entry: ReservationStatusEntry): void {
+    if (this.entries.size >= ProcessingStore.MAX_ENTRIES && !this.entries.has(entry.reservationId)) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.entries.delete(oldestKey);
+      }
+    }
+    this.entries.set(entry.reservationId, entry);
   }
 
-  saveAll(results: ReservationResult[]): void {
-    results.forEach((result) => this.save(result));
+  saveResult(result: ReservationResult, updatedAt: string = new Date().toISOString()): void {
+    this.saveStatus({
+      reservationId: result.reservationId,
+      status: result.status,
+      updatedAt,
+      result
+    });
   }
 
-  find(reservationId: string): ReservationResult | undefined {
-    return this.results.get(reservationId);
+  saveAll(results: ReservationResult[], updatedAt: string = new Date().toISOString()): void {
+    for (const res of results) {
+      this.saveResult(res, updatedAt);
+    }
+  }
+
+  find(reservationId: string): ReservationStatusEntry | undefined {
+    return this.entries.get(reservationId);
+  }
+
+  findResult(reservationId: string): ReservationResult | undefined {
+    return this.entries.get(reservationId)?.result;
   }
 
   clear(): void {
-    this.results.clear();
+    this.entries.clear();
   }
 
   size(): number {
-    return this.results.size;
+    return this.entries.size;
   }
 }
 

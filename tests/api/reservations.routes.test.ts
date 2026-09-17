@@ -3,13 +3,14 @@ import request from 'supertest';
 import { createApp } from '../../src/app';
 import { DEFAULT_PIPELINE_CONFIG, PipelineConfigStore } from '../../src/config/pipelineConfig';
 import { ProcessingStore } from '../../src/store/processingStore';
-import { failingRateProvider, reservation, stubRateProvider } from '../helpers/testDeps';
+import { failingRateProvider, reservation, stubRateProvider, testClock } from '../helpers/testDeps';
 
 function appWith(provider = stubRateProvider({ rate: 5.2 })): Express {
   return createApp({
     configStore: new PipelineConfigStore(DEFAULT_PIPELINE_CONFIG),
     store: new ProcessingStore(),
-    exchangeRateProvider: provider
+    exchangeRateProvider: provider,
+    clock: testClock
   });
 }
 
@@ -17,22 +18,21 @@ describe('POST /reservations/process', () => {
   it('procesa una reserva valida y devuelve precios, conversion y tiempos', async () => {
     const response = await request(appWith())
       .post('/reservations/process')
-      .send({ reservations: [reservation({ passengerId: 'P012' })] });
+      .send({ reservations: [reservation({ passengerId: 'P007' })] });
 
     expect(response.status).toBe(200);
     expect(response.body.summary).toEqual({
       total: 1,
-      processed: 1,
-      processedWithWarnings: 0,
+      confirmed: 1,
       rejected: 0,
       failed: 0
     });
     expect(typeof response.body.processingTimeMs).toBe('number');
     expect(response.body.results[0]).toMatchObject({
       reservationId: 'R-001',
-      status: 'processed',
+      status: 'CONFIRMED',
       pricing: { totalUsd: 565 },
-      currency: { targetCurrency: 'USD' }
+      currency: { targetCurrency: 'ARS' }
     });
     expect(response.body.results[0].trace).toHaveLength(8);
   });
@@ -45,8 +45,9 @@ describe('POST /reservations/process', () => {
           reservation({
             passengerId: 'P002',
             flightCode: 'LA4567',
-            origin: 'EZE',
-            destination: 'GRU'
+            origin: 'SCL',
+            destination: 'GRU',
+            departureDate: '2026-09-27'
           })
         ]
       });
@@ -63,22 +64,23 @@ describe('POST /reservations/process', () => {
       .post('/reservations/process')
       .send({
         reservations: [
-          reservation({ reservationId: 'R-OK', passengerId: 'P012' }),
-          reservation({ reservationId: 'R-NOPAX', passengerId: 'P999' }),
+          reservation({ id: 'R-OK', passengerId: 'P001' }),
+          reservation({ id: 'R-NOPAX', passengerId: 'P999' }),
           reservation({
-            reservationId: 'R-NOSEAT',
-            passengerId: 'P012',
-            flightCode: 'AM0404',
-            origin: 'MEX',
-            destination: 'JFK'
+            id: 'R-NOSEAT',
+            passengerId: 'P001',
+            flightCode: 'AA0002',
+            origin: 'MIA',
+            destination: 'JFK',
+            departureDate: '2026-10-01'
           })
         ]
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.summary).toMatchObject({ total: 3, processed: 1, rejected: 2 });
+    expect(response.body.summary).toMatchObject({ total: 3, confirmed: 1, rejected: 2 });
     const codes = response.body.results.map((result: { errors: { code: string }[] }) => result.errors[0]?.code);
-    expect(codes).toEqual([undefined, 'PASSENGER_NOT_FOUND', 'NO_SEATS_AVAILABLE']);
+    expect(codes).toEqual([undefined, 'PASSENGER_NOT_FOUND', 'NO_SEATS']);
   });
 
   it('continua en USD con warning cuando la API de tipo de cambio falla', async () => {
@@ -86,12 +88,18 @@ describe('POST /reservations/process', () => {
       .post('/reservations/process')
       .send({
         reservations: [
-          reservation({ passengerId: 'P002', flightCode: 'LA4567', origin: 'EZE', destination: 'GRU' })
+          reservation({
+            passengerId: 'P002',
+            flightCode: 'LA4567',
+            origin: 'SCL',
+            destination: 'GRU',
+            departureDate: '2026-09-27'
+          })
         ]
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.results[0].status).toBe('processed_with_warnings');
+    expect(response.body.results[0].status).toBe('CONFIRMED');
     expect(response.body.results[0].warnings[0].code).toBe('EXCHANGE_RATE_UNAVAILABLE');
     expect(response.body.results[0].currency).toMatchObject({ targetCurrency: 'USD', rate: 1 });
     expect(response.body.results[0].pricing.totalUsd).toBeGreaterThan(0);
@@ -111,14 +119,42 @@ describe('POST /reservations/process', () => {
     );
   });
 
-  it('devuelve 400 con detalle cuando el payload esta malformado', async () => {
+  it('marca REJECTED con INVALID_RESERVATION a una reserva malformada dentro del lote sin dar 400', async () => {
     const response = await request(appWith())
       .post('/reservations/process')
-      .send({ reservations: [{ reservationId: 'R-1', passengerId: 'P001', seatClass: 'luxury' }] });
+      .send({ reservations: [{ id: 'R-1', passengerId: 'P001', seatClass: 'luxury' }] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.summary).toEqual({ total: 1, confirmed: 0, rejected: 1, failed: 0 });
+    expect(response.body.results[0]).toMatchObject({
+      reservationId: 'R-1',
+      status: 'REJECTED'
+    });
+    expect(response.body.results[0].errors[0].code).toBe('INVALID_RESERVATION');
+    expect(response.body.results[0].errors[0].message).toContain('seatClass');
+  });
+
+  it('devuelve 400 cuando el sobre contiene IDs duplicados', async () => {
+    const response = await request(appWith())
+      .post('/reservations/process')
+      .send({
+        reservations: [
+          reservation({ id: 'R-DUP' }),
+          reservation({ id: 'R-DUP' })
+        ]
+      });
 
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe('INVALID_REQUEST');
-    expect(response.body.error.details.length).toBeGreaterThan(0);
+  });
+
+  it('devuelve 400 cuando reservations esta vacio o no es un array', async () => {
+    const response = await request(appWith())
+      .post('/reservations/process')
+      .send({ reservations: [] });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('INVALID_REQUEST');
   });
 
   it('devuelve 400 cuando el cuerpo no es JSON valido', async () => {
@@ -137,12 +173,17 @@ describe('GET /reservations/:id/status', () => {
     const app = appWith();
     await request(app)
       .post('/reservations/process')
-      .send({ reservations: [reservation({ reservationId: 'R-777', passengerId: 'P012' })] });
+      .send({ reservations: [reservation({ id: 'R-777', passengerId: 'P007' })] });
 
     const response = await request(app).get('/reservations/R-777/status');
 
     expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ reservationId: 'R-777', status: 'processed' });
+    expect(response.body).toMatchObject({
+      reservationId: 'R-777',
+      status: 'CONFIRMED',
+      result: expect.objectContaining({ reservationId: 'R-777' })
+    });
+    expect(typeof response.body.updatedAt).toBe('string');
   });
 
   it('devuelve 404 si la reserva nunca fue procesada', async () => {

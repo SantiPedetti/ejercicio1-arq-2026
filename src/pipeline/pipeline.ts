@@ -4,10 +4,9 @@ import {
   addError,
   createContext,
   hasErrors,
-  hasWarnings,
   ReservationContext
 } from '../domain/reservationContext';
-import { ReservationRequest } from '../domain/types';
+import { ReservationInput, ReservationRequest } from '../domain/types';
 import { Logger, silentLogger } from '../support/logger';
 import { Filter } from './filter';
 
@@ -18,8 +17,7 @@ export interface PipelineOptions {
 
 export interface BatchSummary {
   total: number;
-  processed: number;
-  processedWithWarnings: number;
+  confirmed: number;
   rejected: number;
   failed: number;
 }
@@ -28,6 +26,10 @@ export interface BatchResult {
   contexts: ReservationContext[];
   summary: BatchSummary;
   processingTimeMs: number;
+}
+
+function reqId(req: ReservationRequest): string {
+  return req.id || req.reservationId || '';
 }
 
 /**
@@ -48,6 +50,7 @@ export class Pipeline {
 
   async process(context: ReservationContext, correlationId?: string): Promise<ReservationContext> {
     const cid = correlationId ?? randomUUID();
+    context.status = 'PROCESSING';
     let current = context;
     for (const filter of this.filters) {
       current = await this.runStep(current, filter, cid);
@@ -77,7 +80,7 @@ export class Pipeline {
     detail?: string
   ): ReservationContext {
     ctx.trace.push({ filter: f.name, status, durationMs: 0, ...(detail ? { detail } : {}) });
-    this.logStep(ctx.request.reservationId, cid, f.name, status, 0);
+    this.logStep(reqId(ctx.request), cid, f.name, status, 0);
     return ctx;
   }
 
@@ -88,7 +91,7 @@ export class Pipeline {
     durationMs: number
   ): ReservationContext {
     next.trace.push({ filter: filterName, status: 'executed', durationMs });
-    this.logStep(next.request.reservationId, cid, filterName, 'executed', durationMs);
+    this.logStep(reqId(next.request), cid, filterName, 'executed', durationMs);
     return next;
   }
 
@@ -126,10 +129,10 @@ export class Pipeline {
   ): ReservationContext {
     const msg = err instanceof Error ? err.message : String(err);
     addError(ctx, f.name, 'FILTER_EXCEPTION', `El filtro fallo de forma inesperada: ${msg}`);
-    ctx.status = 'failed';
+    ctx.status = 'FAILED';
     ctx.aborted = true;
     ctx.trace.push({ filter: f.name, status: 'failed', durationMs, detail: msg });
-    this.logFilterFailure(ctx.request.reservationId, cid, f.name, durationMs, msg);
+    this.logFilterFailure(reqId(ctx.request), cid, f.name, durationMs, msg);
     return ctx;
   }
 
@@ -144,13 +147,20 @@ export class Pipeline {
     this.logger.info('Filtro del pipeline procesado', meta);
   }
 
-  async processBatch(requests: ReservationRequest[], correlationId?: string): Promise<BatchResult> {
-    const cid = correlationId ?? randomUUID();
-    const startedAt = performance.now();
+  private async processAll(requests: (ReservationRequest | ReservationInput)[], cid: string) {
     const contexts: ReservationContext[] = [];
     for (const req of requests) {
       contexts.push(await this.process(createContext(req), cid));
     }
+    return contexts;
+  }
+
+  async processBatch(
+    requests: (ReservationRequest | ReservationInput)[],
+    correlationId?: string
+  ): Promise<BatchResult> {
+    const startedAt = performance.now();
+    const contexts = await this.processAll(requests, correlationId ?? randomUUID());
     return {
       contexts,
       summary: summarize(contexts),
@@ -160,23 +170,22 @@ export class Pipeline {
 }
 
 function finalizeStatus(context: ReservationContext): ReservationContext {
-  if (context.status === 'rejected' || context.status === 'failed') return context;
+  if (context.status === 'REJECTED' || context.status === 'FAILED') return context;
   if (hasErrors(context)) {
-    context.status = 'rejected';
+    context.status = 'REJECTED';
     return context;
   }
-  context.status = hasWarnings(context) ? 'processed_with_warnings' : 'processed';
+  context.status = 'CONFIRMED';
   return context;
 }
 
 function summarize(contexts: ReservationContext[]): BatchSummary {
-  const summary: BatchSummary = { total: 0, processed: 0, processedWithWarnings: 0, rejected: 0, failed: 0 };
+  const summary: BatchSummary = { total: 0, confirmed: 0, rejected: 0, failed: 0 };
   for (const ctx of contexts) {
     summary.total += 1;
-    if (ctx.status === 'processed') summary.processed += 1;
-    else if (ctx.status === 'processed_with_warnings') summary.processedWithWarnings += 1;
-    else if (ctx.status === 'rejected') summary.rejected += 1;
-    else if (ctx.status === 'failed') summary.failed += 1;
+    if (ctx.status === 'CONFIRMED') summary.confirmed += 1;
+    else if (ctx.status === 'REJECTED') summary.rejected += 1;
+    else if (ctx.status === 'FAILED') summary.failed += 1;
   }
   return summary;
 }

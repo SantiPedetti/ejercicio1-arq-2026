@@ -1,14 +1,22 @@
 import { DEFAULT_PIPELINE_CONFIG, PipelineConfig, PipelineConfigStore } from '../../src/config/pipelineConfig';
+import { buildMockFlights } from '../../src/data/mockFlights';
+import { buildMockPassengers } from '../../src/data/mockPassengers';
 import { createContext, ReservationContext } from '../../src/domain/reservationContext';
-import { ReservationRequest } from '../../src/domain/types';
+import { ReservationInput, ReservationRequest } from '../../src/domain/types';
 import { FilterDependencies } from '../../src/pipeline/filter';
-import { flightRepository } from '../../src/repositories/flightRepository';
-import { passengerRepository } from '../../src/repositories/passengerRepository';
+import { createFlightRepository } from '../../src/repositories/flightRepository';
+import { createPassengerRepository } from '../../src/repositories/passengerRepository';
 import {
   ExchangeRateProvider,
   ExchangeRateResult
 } from '../../src/services/exchangeRate/exchangeRateProvider';
+import { FixedClock } from '../../src/support/clock';
 import { silentLogger } from '../../src/support/logger';
+
+export const TEST_NOW = new Date('2026-09-17T12:00:00.000Z');
+export const testClock = new FixedClock(TEST_NOW);
+export const testPassengers = createPassengerRepository(buildMockPassengers(TEST_NOW));
+export const testFlights = createFlightRepository(buildMockFlights(TEST_NOW));
 
 export function configWith(patch: Parameters<PipelineConfigStore['update']>[0] = {}): PipelineConfig {
   return new PipelineConfigStore(DEFAULT_PIPELINE_CONFIG).update(patch);
@@ -41,29 +49,37 @@ export function failingRateProvider(message = 'la API no responde'): ExchangeRat
 export function testDeps(overrides: Partial<FilterDependencies> = {}): FilterDependencies {
   return {
     config: configWith(),
-    passengers: passengerRepository,
-    flights: flightRepository,
+    passengers: testPassengers,
+    flights: testFlights,
     exchangeRates: stubRateProvider(),
     logger: silentLogger,
-    now: () => new Date('2026-09-17T12:00:00.000Z'),
+    now: () => testClock.now(),
     ...overrides
   };
 }
 
-export function reservation(overrides: Partial<ReservationRequest> = {}): ReservationRequest {
+export function reservation(overrides: Partial<ReservationInput> = {}): ReservationInput {
   return {
-    reservationId: 'R-001',
-    passengerId: 'P012',
+    id: 'R-001',
+    passengerId: 'P001',
     flightCode: 'AA001',
-    origin: 'EZE',
-    destination: 'MIA',
+    origin: 'JFK',
+    destination: 'EZE',
+    departureDate: '2026-10-08',
     seatClass: 'economy',
+    passengerType: 'adult',
     ...overrides
   };
 }
 
-export function contextFor(overrides: Partial<ReservationRequest> = {}): ReservationContext {
-  return createContext(reservation(overrides));
+export function contextFor(overrides: Partial<ReservationInput> = {}): ReservationContext {
+  const input = reservation(overrides);
+  const req: ReservationRequest = {
+    ...input,
+    id: input.id ?? 'R-001',
+    reservationId: input.id ?? 'R-001'
+  };
+  return createContext(req);
 }
 
 export function issueCodes(context: ReservationContext): string[] {

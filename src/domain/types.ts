@@ -6,38 +6,50 @@ export type SeatClass = 'economy' | 'business' | 'first';
 
 export interface Passenger {
   id: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   email: string;
-  phone: string;
-  age: number;
-  passengerType: PassengerType;
+  birthDate: string;
+  country: string;
   loyaltyTier: LoyaltyTier;
-  countryCode: string;
   isActive: boolean;
+  countryCode?: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 export interface Flight {
+  code: string;
   flightCode: string;
-  airline: string;
   origin: string;
   destination: string;
+  originCountry: string;
+  destinationCountry: string;
   destinationCountryCode: string;
+  departureAt: string;
   departureDate: string;
   durationMinutes: number;
+  baseFare: number;
   basePriceUsd: number;
   availableSeats: number;
+  airline?: string;
 }
 
-/** Payload que el cliente envia por cada reserva a procesar. */
-export interface ReservationRequest {
-  reservationId: string;
+/** Contrato publico de entrada por cada reserva (BUILD-TASKS F2). */
+export interface ReservationInput {
+  id?: string;
   passengerId: string;
   flightCode: string;
   origin: string;
   destination: string;
+  departureDate: string;
   seatClass: SeatClass;
-  seats?: number;
+  passengerType: PassengerType;
+}
+
+/** Representacion interna de la reserva dentro del contexto del pipeline. */
+export interface ReservationRequest extends ReservationInput {
+  id: string;
+  reservationId?: string;
 }
 
 export interface PriceBreakdown {
@@ -55,10 +67,6 @@ export interface PriceBreakdown {
   totalUsd: number;
 }
 
-/**
- * Origen de la tasa aplicada: llamada real a la API, cache en memoria, tasa de
- * respaldo configurada, o conversion trivial cuando la moneda destino es USD.
- */
 export type RateSource = 'api' | 'cache' | 'fallback' | 'identity';
 
 export interface CurrencyMetadata {
@@ -77,6 +85,7 @@ export interface ProcessingIssue {
   code: string;
   message: string;
   severity: IssueSeverity;
+  details?: unknown;
 }
 
 export interface FilterTrace {

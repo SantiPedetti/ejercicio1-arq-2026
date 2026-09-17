@@ -1,21 +1,26 @@
-import { addWarning, rejectReservation, ReservationContext } from '../../domain/reservationContext';
-import { Passenger, PassengerType } from '../../domain/types';
+import { calculateAge, expectedPassengerType } from '../../domain/age';
+import { rejectReservation, ReservationContext } from '../../domain/reservationContext';
+import { Passenger } from '../../domain/types';
 import { Filter, FilterDependencies, FilterFactory } from '../filter';
+
+export { expectedPassengerType };
 
 const FILTER = 'validatePassenger' as const;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-export const CHILD_MAX_AGE = 12;
-export const SENIOR_MIN_AGE = 65;
-
-/** Tipo de pasajero que corresponde a una edad segun las reglas del negocio. */
-export function expectedPassengerType(age: number): PassengerType {
-  if (age < CHILD_MAX_AGE) return 'child';
-  if (age > SENIOR_MIN_AGE) return 'senior';
-  return 'adult';
+function checkPassengerFound(context: ReservationContext, passenger: Passenger | undefined) {
+  if (!passenger) {
+    return rejectReservation(
+      context,
+      FILTER,
+      'PASSENGER_NOT_FOUND',
+      `El pasajero ${context.request.passengerId} no existe`
+    );
+  }
+  return undefined;
 }
 
-function checkActiveAndName(context: ReservationContext, passenger: Passenger) {
+function checkActive(context: ReservationContext, passenger: Passenger) {
   if (!passenger.isActive) {
     return rejectReservation(
       context,
@@ -24,45 +29,42 @@ function checkActiveAndName(context: ReservationContext, passenger: Passenger) {
       `El pasajero ${passenger.id} no esta activo`
     );
   }
-  if (passenger.firstName.trim().length === 0 || passenger.lastName.trim().length === 0) {
-    return rejectReservation(context, FILTER, 'PASSENGER_NAME_INVALID', 'El nombre del pasajero esta incompleto');
-  }
   return undefined;
 }
 
-function checkEmail(context: ReservationContext, email: string) {
-  if (!EMAIL_PATTERN.test(email)) {
+function checkContact(context: ReservationContext, passenger: Passenger) {
+  const hasValidName = typeof passenger.name === 'string' && passenger.name.trim().length > 0;
+  const hasValidEmail = EMAIL_PATTERN.test(passenger.email);
+  if (!hasValidName || !hasValidEmail) {
     return rejectReservation(
       context,
       FILTER,
-      'PASSENGER_EMAIL_INVALID',
-      `El email del pasajero no tiene un formato valido: ${email}`
+      'INVALID_CONTACT',
+      `Los datos de contacto del pasajero ${passenger.id} son invalidos`
     );
   }
   return undefined;
 }
 
-function checkPassengerType(context: ReservationContext, passenger: Passenger) {
-  const expectedType = expectedPassengerType(passenger.age);
-  if (expectedType !== passenger.passengerType) {
+function checkAgeMatch(context: ReservationContext, passenger: Passenger) {
+  const age = calculateAge(passenger.birthDate, context.request.departureDate);
+  const expected = expectedPassengerType(age);
+  if (expected !== context.request.passengerType) {
     return rejectReservation(
       context,
       FILTER,
       'PASSENGER_TYPE_MISMATCH',
-      `La edad ${passenger.age} corresponde al tipo "${expectedType}" y el pasajero esta registrado como "${passenger.passengerType}"`
+      `La edad ${age} corresponde al tipo "${expected}" pero se declaro "${context.request.passengerType}"`
     );
-  }
-  if (passenger.phone.trim().length === 0) {
-    addWarning(context, FILTER, 'PASSENGER_PHONE_MISSING', 'El pasajero no tiene telefono de contacto registrado');
   }
   return undefined;
 }
 
-function checkPassenger(context: ReservationContext, passenger: Passenger) {
+function validatePassengerDetails(context: ReservationContext, passenger: Passenger) {
   return (
-    checkActiveAndName(context, passenger) ??
-    checkEmail(context, passenger.email) ??
-    checkPassengerType(context, passenger)
+    checkActive(context, passenger) ??
+    checkContact(context, passenger) ??
+    checkAgeMatch(context, passenger)
   );
 }
 
@@ -73,16 +75,10 @@ class ValidatePassengerFilter implements Filter {
 
   execute(context: ReservationContext): ReservationContext {
     const passenger = this.passengers.findById(context.request.passengerId);
-    if (!passenger) {
-      return rejectReservation(
-        context,
-        FILTER,
-        'PASSENGER_NOT_FOUND',
-        `El pasajero ${context.request.passengerId} no existe`
-      );
-    }
+    const notFound = checkPassengerFound(context, passenger);
+    if (notFound || !passenger) return context;
     context.passenger = passenger;
-    return checkPassenger(context, passenger) ?? context;
+    return validatePassengerDetails(context, passenger) ?? context;
   }
 }
 

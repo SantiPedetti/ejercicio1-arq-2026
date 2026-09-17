@@ -27,9 +27,9 @@ function resolvePassengerTypeRate(
   context: ReservationContext,
   discounts: FilterDependencies['config']['passengerTypeDiscounts']
 ): number | undefined {
-  const passengerType = context.passenger?.passengerType;
+  const passengerType = context.request.passengerType;
   if (!passengerType) {
-    addWarning(context, FILTER, 'PASSENGER_NOT_RESOLVED', 'Sin pasajero resuelto no se aplica ajuste por tipo de pasajero');
+    addWarning(context, FILTER, 'PASSENGER_NOT_RESOLVED', 'Sin tipo de pasajero no se aplica ajuste');
     return undefined;
   }
   return discounts[passengerType] ?? 0;

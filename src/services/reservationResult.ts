@@ -25,12 +25,12 @@ export interface ReservationResult {
   processedAt: string;
 }
 
-function projectPassenger(p: ReservationContext['passenger']) {
+function projectPassenger(p: ReservationContext['passenger'], ctx: ReservationContext) {
   if (!p) return undefined;
   return {
     id: p.id,
-    fullName: `${p.firstName} ${p.lastName}`.trim(),
-    passengerType: p.passengerType,
+    fullName: p.name,
+    passengerType: ctx.request.passengerType,
     loyaltyTier: p.loyaltyTier
   };
 }
@@ -38,25 +38,25 @@ function projectPassenger(p: ReservationContext['passenger']) {
 function projectFlight(f: ReservationContext['flight']) {
   if (!f) return undefined;
   return {
-    flightCode: f.flightCode,
+    flightCode: f.code || f.flightCode,
     origin: f.origin,
     destination: f.destination,
-    departureDate: f.departureDate,
-    destinationCountryCode: f.destinationCountryCode
+    departureDate: f.departureAt || f.departureDate,
+    destinationCountryCode: f.destinationCountry || f.destinationCountryCode
   };
 }
 
 /** Proyecta el contexto interno del pipeline al contrato publico de la API. */
 export function toReservationResult(context: ReservationContext, processedAt = new Date()): ReservationResult {
   const result: ReservationResult = {
-    reservationId: context.request.reservationId,
+    reservationId: context.request.id || context.request.reservationId || '',
     status: context.status,
     errors: errorsOf(context),
     warnings: warningsOf(context),
     trace: context.trace,
     processedAt: processedAt.toISOString()
   };
-  if (context.passenger) result.passenger = projectPassenger(context.passenger);
+  if (context.passenger) result.passenger = projectPassenger(context.passenger, context);
   if (context.flight) result.flight = projectFlight(context.flight);
   if (context.pricing) result.pricing = context.pricing;
   if (context.currency) result.currency = context.currency;

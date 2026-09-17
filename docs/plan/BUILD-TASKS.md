@@ -75,6 +75,11 @@
 
 ## F3 — Runner y contexto (PLAN §3.1–§3.4, §6)
 
+- **Pendientes de la revisión de F2:**
+  - Quitar los alias heredados de `Passenger` (`countryCode`) y de `Flight` (`destinationCountryCode`, `departureDate`, `basePriceUsd`); usar solo los nombres del PLAN.
+  - En los mocks, calcular `birthDate` desde `now` con edad **exacta** (restar años al mismo día y mes de `now`, menos un día), para que la edad no dependa de la fecha en que corren los tests.
+  - Borrar el test `it.skip` de reordenamiento en `tests/api/pipeline.routes.test.ts`, porque el orden pasa a ser fijo, y reemplazarlo por un test de que `filterOrder` en el PUT → 400.
+
 - **Orden fijo de los filtros:** eliminar `filterOrder` de la configuración y del PUT. Una clave desconocida en el PUT → 400 (`.strict()`).
 - **Contrato del filtro:**
   - `Filter` tiene `critical: boolean`.
@@ -98,6 +103,8 @@
   - El `config` que llega en un POST **no puede incluir `exchangeRate`/`exchange`** (400 si viene) y no modifica la configuración global.
 
 ## F4 — Precio (PLAN §4, Q2)
+
+- **Pendiente de la revisión de F2:** quitar el `it.skip` de los tests de totales en `tests/filters/pricing.filters.test.ts`. El de P004 debe esperar 3740.20, y hay que agregar el de P009 = 3397.48.
 
 - **Filtro 4:** `classPrice = baseFare × multiplicador`; `currentPrice = classPrice`.
 - **Filtros 5 y 6:** descuentan sobre `currentPrice`, encadenados. Si están deshabilitados, no tocan `currentPrice`.

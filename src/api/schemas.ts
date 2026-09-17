@@ -11,17 +11,20 @@ const airportCodeSchema = z
   .regex(/^[A-Za-z]{3}$/, 'debe ser un codigo IATA de 3 letras');
 const rateSchema = z.number().min(0).max(1);
 
-export const reservationRequestSchema = z
+export const singleReservationSchema = z
   .object({
-    reservationId: z.string().trim().min(1),
+    id: z.string().trim().min(1).optional(),
     passengerId: z.string().trim().min(1),
     flightCode: z.string().trim().min(1),
     origin: airportCodeSchema,
     destination: airportCodeSchema,
+    departureDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'debe tener formato YYYY-MM-DD'),
     seatClass: seatClassSchema,
-    seats: z.number().int().positive().max(9).optional()
+    passengerType: passengerTypeSchema
   })
   .strict();
+
+export const reservationRequestSchema = singleReservationSchema;
 
 export const pipelineConfigPatchSchema = z
   .object({
@@ -52,13 +55,34 @@ export const pipelineConfigPatchSchema = z
   })
   .strict();
 
+function extractSentId(item: unknown): string | undefined {
+  if (item && typeof item === 'object' && 'id' in item) {
+    const id = (item as { id: unknown }).id;
+    if (typeof id === 'string' && id.trim().length > 0) return id;
+  }
+  return undefined;
+}
+
+function validateDuplicateIds(items: unknown[], ctx: z.RefinementCtx): void {
+  const seen = new Set<string>();
+  items.forEach((item, i) => {
+    const id = extractSentId(item);
+    if (!id) return;
+    if (seen.has(id)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `ID duplicado: ${id}`, path: ['reservations', i, 'id'] });
+    } else {
+      seen.add(id);
+    }
+  });
+}
+
 export const processReservationsSchema = z
   .object({
-    reservations: z.array(reservationRequestSchema).min(1).max(200),
-    /** Overrides validos solo para este request, sin mutar la config global. */
+    reservations: z.array(z.unknown()).min(1).max(100),
     config: pipelineConfigPatchSchema.optional()
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => validateDuplicateIds(data.reservations, ctx));
 
 export type ProcessReservationsBody = z.infer<typeof processReservationsSchema>;
 export type PipelineConfigPatchBody = z.infer<typeof pipelineConfigPatchSchema>;

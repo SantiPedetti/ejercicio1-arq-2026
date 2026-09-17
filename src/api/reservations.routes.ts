@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { Request, Response, Router } from 'express';
-import { ReservationRequest } from '../domain/types';
 import { ProcessBatchResponse, ReservationProcessingService } from '../services/reservationProcessingService';
 import { HttpError } from './errorHandler';
 import { processReservationsSchema, toValidationIssues } from './schemas';
@@ -33,20 +32,20 @@ async function handleProcess(
 ): Promise<void> {
   const data = parseReservationBody(req.body);
   const cid = (req.headers['x-correlation-id'] as string) || randomUUID();
-  const response = await service.processBatch(data.reservations as ReservationRequest[], data.config, cid);
+  const response = await service.processBatch(data.reservations, data.config, cid);
   sendBatchResponse(res, response);
 }
 
 function handleGetStatus(req: Request, res: Response, service: ReservationProcessingService): void {
-  const result = service.findResult(req.params.id as string);
-  if (!result) {
+  const status = service.findStatus(req.params.id as string);
+  if (!status) {
     throw new HttpError(
       404,
       'RESERVATION_NOT_PROCESSED',
       `No hay resultados de procesamiento para la reserva ${req.params.id}`
     );
   }
-  res.status(200).json(result);
+  res.status(200).json(status);
 }
 
 export function createReservationsRouter(service: ReservationProcessingService): Router {

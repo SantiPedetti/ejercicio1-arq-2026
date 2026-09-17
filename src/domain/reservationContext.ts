@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   CurrencyMetadata,
   FilterTrace,
@@ -5,10 +6,11 @@ import {
   Passenger,
   PriceBreakdown,
   ProcessingIssue,
+  ReservationInput,
   ReservationRequest
 } from './types';
 
-export type ReservationStatus = 'pending' | 'processed' | 'processed_with_warnings' | 'rejected' | 'failed';
+export type ReservationStatus = 'PENDING' | 'PROCESSING' | 'CONFIRMED' | 'REJECTED' | 'FAILED';
 
 /**
  * Objeto que viaja por los pipes del pipeline. Cada filtro lee lo que necesita,
@@ -28,10 +30,11 @@ export interface ReservationContext {
   metadata: Record<string, unknown>;
 }
 
-export function createContext(request: ReservationRequest): ReservationContext {
+export function createContext(request: ReservationRequest | ReservationInput): ReservationContext {
+  const id = request.id || randomUUID();
   return {
-    request,
-    status: 'pending',
+    request: { ...request, id, reservationId: id },
+    status: 'PENDING',
     aborted: false,
     issues: [],
     trace: [],
@@ -60,7 +63,7 @@ export function rejectReservation(
   message: string
 ): ReservationContext {
   addError(context, filter, code, message);
-  context.status = 'rejected';
+  context.status = 'REJECTED';
   context.aborted = true;
   return context;
 }

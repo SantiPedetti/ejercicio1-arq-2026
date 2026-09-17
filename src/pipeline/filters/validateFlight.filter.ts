@@ -4,25 +4,25 @@ import { Filter, FilterDependencies, FilterFactory } from '../filter';
 
 const FILTER = 'validateFlight' as const;
 
-function checkSeatsAvailability(context: ReservationContext, flight: Flight) {
-  if (flight.availableSeats <= 0) {
+function checkFlightFound(context: ReservationContext, flight: Flight | undefined) {
+  if (!flight) {
     return rejectReservation(
       context,
       FILTER,
-      'NO_SEATS_AVAILABLE',
-      `El vuelo ${flight.flightCode} no tiene asientos disponibles`
+      'FLIGHT_NOT_FOUND',
+      `El vuelo ${context.request.flightCode} no existe`
     );
   }
   return undefined;
 }
 
-function checkSeatsCapacity(context: ReservationContext, flight: Flight, requested: number) {
-  if (requested > flight.availableSeats) {
+function checkSeats(context: ReservationContext, flight: Flight) {
+  if (flight.availableSeats <= 0) {
     return rejectReservation(
       context,
       FILTER,
-      'INSUFFICIENT_SEATS',
-      `Se solicitaron ${requested} asientos y el vuelo ${flight.flightCode} solo tiene ${flight.availableSeats}`
+      'NO_SEATS',
+      `El vuelo ${flight.code || flight.flightCode} no tiene asientos disponibles`
     );
   }
   return undefined;
@@ -30,7 +30,7 @@ function checkSeatsCapacity(context: ReservationContext, flight: Flight, request
 
 function checkRoute(context: ReservationContext, flight: Flight) {
   const { origin, destination, flightCode } = context.request;
-  if (origin.toUpperCase() !== flight.origin || destination.toUpperCase() !== flight.destination) {
+  if (origin.toUpperCase() !== flight.origin.toUpperCase() || destination.toUpperCase() !== flight.destination.toUpperCase()) {
     return rejectReservation(
       context,
       FILTER,
@@ -41,13 +41,25 @@ function checkRoute(context: ReservationContext, flight: Flight) {
   return undefined;
 }
 
-function checkDepartureDate(context: ReservationContext, flight: Flight, now: () => Date) {
-  if (new Date(flight.departureDate).getTime() <= now().getTime()) {
+function checkFlightNotDeparted(context: ReservationContext, flight: Flight, now: () => Date) {
+  if (new Date(flight.departureAt).getTime() <= now().getTime()) {
     return rejectReservation(
       context,
       FILTER,
-      'FLIGHT_ALREADY_DEPARTED',
-      `La fecha de salida del vuelo ${flight.flightCode} (${flight.departureDate}) no es futura`
+      'FLIGHT_DEPARTED',
+      `La fecha de salida del vuelo ${flight.code || flight.flightCode} ya paso`
+    );
+  }
+  return undefined;
+}
+
+function checkDateMatches(context: ReservationContext, flight: Flight) {
+  if (context.request.departureDate !== flight.departureAt.slice(0, 10)) {
+    return rejectReservation(
+      context,
+      FILTER,
+      'DATE_MISMATCH',
+      `La fecha de salida solicitada ${context.request.departureDate} no coincide con el vuelo (${flight.departureAt.slice(0, 10)})`
     );
   }
   return undefined;
@@ -55,10 +67,10 @@ function checkDepartureDate(context: ReservationContext, flight: Flight, now: ()
 
 function validateFlightDetails(context: ReservationContext, flight: Flight, now: () => Date) {
   return (
-    checkSeatsAvailability(context, flight) ??
-    checkSeatsCapacity(context, flight, context.request.seats ?? 1) ??
+    checkSeats(context, flight) ??
     checkRoute(context, flight) ??
-    checkDepartureDate(context, flight, now)
+    checkFlightNotDeparted(context, flight, now) ??
+    checkDateMatches(context, flight)
   );
 }
 
@@ -72,14 +84,8 @@ class ValidateFlightFilter implements Filter {
 
   execute(context: ReservationContext): ReservationContext {
     const flight = this.flights.findByCode(context.request.flightCode);
-    if (!flight) {
-      return rejectReservation(
-        context,
-        FILTER,
-        'FLIGHT_NOT_FOUND',
-        `El vuelo ${context.request.flightCode} no existe`
-      );
-    }
+    const notFound = checkFlightFound(context, flight);
+    if (notFound || !flight) return context;
     context.flight = flight;
     return validateFlightDetails(context, flight, this.now) ?? context;
   }

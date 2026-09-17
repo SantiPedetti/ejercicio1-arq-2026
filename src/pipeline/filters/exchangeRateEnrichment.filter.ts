@@ -73,7 +73,8 @@ function handleRateError(
   logger: Logger
 ): void {
   const msg = error instanceof Error ? error.message : String(error);
-  logEnrichmentWarning(logger, context.request.reservationId, target, msg);
+  const id = context.request.id || context.request.reservationId || '';
+  logEnrichmentWarning(logger, id, target, msg);
   addWarning(context, FILTER, 'EXCHANGE_RATE_UNAVAILABLE', `No se pudo obtener la tasa de cambio (${msg}); la reserva continua en ${base}`);
   setIdentityCurrency(context, base);
 }

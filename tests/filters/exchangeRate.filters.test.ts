@@ -1,19 +1,19 @@
 import { createContext } from '../../src/domain/reservationContext';
 import { createCurrencyConversionFilter } from '../../src/pipeline/filters/currencyConversion.filter';
 import { createExchangeRateEnrichmentFilter } from '../../src/pipeline/filters/exchangeRateEnrichment.filter';
-import { flightRepository } from '../../src/repositories/flightRepository';
 import {
   contextFor,
   failingRateProvider,
   issueCodes,
   reservation,
   stubRateProvider,
-  testDeps
+  testDeps,
+  testFlights
 } from '../helpers/testDeps';
 
 function contextWithFlight(flightCode: string) {
   const context = createContext(reservation({ flightCode }));
-  context.flight = flightRepository.findByCode(flightCode);
+  context.flight = testFlights.findByCode(flightCode);
   return context;
 }
 
@@ -39,7 +39,7 @@ describe('filtro de enriquecimiento con tipo de cambio', () => {
       testDeps({ exchangeRates: stubRateProvider({ source: 'fallback', rate: 1000 }) })
     );
 
-    const context = await filter.execute(contextWithFlight('AF0416'));
+    const context = await filter.execute(contextWithFlight('AF0010'));
 
     expect(issueCodes(context)).toEqual(['EXCHANGE_RATE_FALLBACK']);
     expect(context.currency?.rateSource).toBe('fallback');
@@ -50,9 +50,9 @@ describe('filtro de enriquecimiento con tipo de cambio', () => {
       testDeps({ exchangeRates: failingRateProvider('timeout de 5000 ms') })
     );
 
-    const context = await filter.execute(contextWithFlight('LA800'));
+    const context = await filter.execute(contextWithFlight('LA4567'));
 
-    expect(context.status).toBe('pending');
+    expect(context.status).toBe('PENDING');
     expect(context.aborted).toBe(false);
     expect(issueCodes(context)).toEqual(['EXCHANGE_RATE_UNAVAILABLE']);
     expect(context.currency).toMatchObject({ targetCurrency: 'USD', rate: 1, rateSource: 'identity' });
@@ -72,7 +72,7 @@ describe('filtro de enriquecimiento con tipo de cambio', () => {
       testDeps({ exchangeRates: stubRateProvider({ rate: 1, source: 'identity' }) })
     );
 
-    const context = await filter.execute(contextWithFlight('AA001'));
+    const context = await filter.execute(contextWithFlight('AA0002'));
 
     expect(context.currency).toMatchObject({ targetCurrency: 'USD', rate: 1 });
     expect(context.issues).toHaveLength(0);
