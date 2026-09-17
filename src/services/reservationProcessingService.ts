@@ -152,11 +152,7 @@ export class ReservationProcessingService {
   }
 
   private async executeBatch(items: unknown[], pipeline: Pipeline, cid?: string): Promise<ReservationResult[]> {
-    const results: ReservationResult[] = [];
-    for (const item of items) {
-      results.push(await this.processItem(item, pipeline, cid));
-    }
-    return results;
+    return Promise.all(items.map((item) => this.processItem(item, pipeline, cid)));
   }
 
   async processBatch(

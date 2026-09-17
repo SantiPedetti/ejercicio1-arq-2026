@@ -212,11 +212,7 @@ export class Pipeline {
   }
 
   private async processAll(requests: (ReservationRequest | ReservationInput)[], cid: string) {
-    const contexts: ReservationContext[] = [];
-    for (const req of requests) {
-      contexts.push(await this.process(createContext(req), cid));
-    }
-    return contexts;
+    return Promise.all(requests.map((req) => this.process(createContext(req), cid)));
   }
 
   async processBatch(

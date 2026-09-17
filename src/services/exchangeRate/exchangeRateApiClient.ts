@@ -69,6 +69,15 @@ async function callFetch(url: string, timeoutMs: number, fetchFn: FetchLike): Pr
   }
 }
 
+async function readJsonPayload(res: Response): Promise<Record<string, number>> {
+  try {
+    return parsePayload(await res.json());
+  } catch (err) {
+    if (err instanceof ExchangeRateError) throw err;
+    throw new ExchangeRateError('INVALID_RESPONSE', err);
+  }
+}
+
 async function fetchRatesHttp(
   url: string,
   timeoutMs: number,
@@ -80,7 +89,7 @@ async function fetchRatesHttp(
     if (!isRetryableHttp(res.status)) throw new ExchangeRateError(msg);
     throw new Error(msg);
   }
-  return parsePayload(await res.json());
+  return await readJsonPayload(res);
 }
 
 /**
@@ -119,7 +128,7 @@ export class ExchangeRateApiClient implements ExchangeRateProvider {
   private async onAttemptError(err: unknown, attempt: number, max: number): Promise<never> {
     if (err instanceof ExchangeRateError) throw err;
     this.logger.warn('Fallo intento contra la API de tipo de cambio', { attempt, maxAttempts: max, err });
-    if (attempt < max) await this.sleep(calculateDelay(attempt, 200, this.random));
+    if (attempt < max) await this.sleep(calculateDelay(attempt, this.settings.retryDelayMs ?? 200, this.random));
     throw err;
   }
 

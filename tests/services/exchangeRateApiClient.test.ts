@@ -3,7 +3,10 @@ import {
   ExchangeRateApiClient,
   FetchLike
 } from '../../src/services/exchangeRate/exchangeRateApiClient';
-import { ExchangeRateError } from '../../src/services/exchangeRate/exchangeRateProvider';
+import {
+  ExchangeRateError,
+  ExchangeRateUnavailableError
+} from '../../src/services/exchangeRate/exchangeRateProvider';
 
 function settings(overrides: Partial<ExchangeRateSettings> = {}): ExchangeRateSettings {
   return {
@@ -154,6 +157,30 @@ describe('proveedor de tipo de cambio (ExchangeRateApiClient)', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it('no reintenta ante un body que no es JSON valido (res.json falla) y lanza ExchangeRateError(INVALID_RESPONSE)', async () => {
+    const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      }
+    } as unknown as Response);
+
+    const client = new ExchangeRateApiClient({
+      settings: settings({ maxAttempts: 3 }),
+      fetchFn
+    });
+
+    const promise = client.getRates('USD', {
+      timeoutMs: 5000,
+      maxAttempts: 3,
+      cacheTtlMs: 3600000
+    });
+
+    await expect(promise).rejects.toThrow('INVALID_RESPONSE');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it('sirve desde cache dentro del TTL y consulta la API al expirar', async () => {
     const fetchFn = jest
       .fn<Promise<Response>, Parameters<FetchLike>>()
@@ -272,5 +299,37 @@ describe('proveedor de tipo de cambio (ExchangeRateApiClient)', () => {
     client.invalidate();
     await client.getRates('USD', { timeoutMs: 5000, maxAttempts: 3, cacheTtlMs: 3600000 });
     expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  describe('getRate (metodo singular)', () => {
+    it('devuelve tasa identidad 1 cuando base y destino son iguales', async () => {
+      const client = new ExchangeRateApiClient({ settings: settings() });
+      const result = await client.getRate('USD');
+
+      expect(result.rate).toBe(1);
+      expect(result.source).toBe('identity');
+      expect(result.baseCurrency).toBe('USD');
+      expect(result.targetCurrency).toBe('USD');
+    });
+
+    it('devuelve la tasa correcta si la moneda esta en la respuesta', async () => {
+      const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue(
+        okResponse({ EUR: 0.92 })
+      );
+      const client = new ExchangeRateApiClient({ settings: settings(), fetchFn });
+      const result = await client.getRate('EUR');
+
+      expect(result.rate).toBe(0.92);
+      expect(result.targetCurrency).toBe('EUR');
+    });
+
+    it('lanza ExchangeRateUnavailableError si la moneda no esta en las tasas', async () => {
+      const fetchFn = jest.fn<Promise<Response>, Parameters<FetchLike>>().mockResolvedValue(
+        okResponse({ BRL: 5.2 })
+      );
+      const client = new ExchangeRateApiClient({ settings: settings(), fetchFn });
+
+      await expect(client.getRate('EUR')).rejects.toThrow(ExchangeRateUnavailableError);
+    });
   });
 });

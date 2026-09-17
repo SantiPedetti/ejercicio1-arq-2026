@@ -24,7 +24,7 @@
 
 ## Desvíos aceptados por el usuario (no cambiar; documentar en el README y en `architecture.md`)
 
-- **D1.** El lote se procesa **en secuencia**, no con `Promise.all`. La caché con single-flight igual se implementa (F5), por si hay requests concurrentes.
+- **D1.** ~~El lote se procesa en secuencia~~ **Anulado en F6 (17/09).** El escenario AC 1 (una sola tanda de reintentos por lote) solo se cumple si las reservas entran juntas: en secuencia, cada una abría su propia tanda porque el single-flight ya se había vaciado. El lote volvió a `Promise.all`, como decía el PLAN §7 original.
 - **D2.** Se mantienen **ts-jest y tsx** (en lugar de babel-jest y `node --watch`).
 - **D3.** Los enums quedan **en minúscula** (`gold`, `child`, `economy`). Donde el PLAN diga `GOLD`, `CHILD`, etc., se usa la minúscula. Los códigos de error y los estados siguen en MAYÚSCULA.
 
