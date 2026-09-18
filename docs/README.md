@@ -14,12 +14,12 @@
 
 ## Decisiones de arquitectura (ADR)
 
-| ADR | Titulo | Estado |
-|---|---|---|
-| [ADR-001](adr/ADR-001-pipes-and-filters.md) | Adoptar Pipes & Filters en proceso con contexto compartido | Aceptado |
-| [ADR-002](adr/ADR-002-contexto-mutable.md) | Contexto mutable acumulativo frente a transformacion inmutable | Aceptado |
-| [ADR-003](adr/ADR-003-aislamiento-de-fallos.md) | Aislamiento de fallos por filtro y politica de continuidad del lote | Aceptado |
-| [ADR-004](adr/ADR-004-integracion-tipo-de-cambio.md) | Integracion resiliente con la API de tipo de cambio | Aceptado |
-| [ADR-005](adr/ADR-005-configuracion-mutable.md) | Configuracion del pipeline mutable en memoria, con overrides por request | Aceptado |
-| [ADR-006](adr/ADR-006-estado-en-memoria.md) | Datos mock y estado de procesamiento en memoria, detras de abstracciones | Aceptado |
-| [ADR-007](adr/ADR-007-orden-pipeline-tipo-de-cambio.md) | Orden del pipeline y separacion del filtro de tipo de cambio | Aceptado |
+| ADR | Titulo |
+|---|---|
+| [ADR-001](adr/ADR-001-pipes-and-filters.md) | Adoptar Pipes & Filters en proceso con contexto compartido |
+| [ADR-002](adr/ADR-002-contexto-mutable.md) | Contexto mutable acumulativo frente a transformacion inmutable |
+| [ADR-003](adr/ADR-003-aislamiento-de-fallos.md) | Aislamiento de fallos por filtro y politica de continuidad del lote |
+| [ADR-004](adr/ADR-004-integracion-tipo-de-cambio.md) | Integracion resiliente con la API de tipo de cambio |
+| [ADR-005](adr/ADR-005-configuracion-mutable.md) | Configuracion del pipeline mutable en memoria, con overrides por request |
+| [ADR-006](adr/ADR-006-estado-en-memoria.md) | Datos mock y estado de procesamiento en memoria, detras de abstracciones |
+| [ADR-007](adr/ADR-007-orden-pipeline-tipo-de-cambio.md) | Orden del pipeline y separacion del filtro de tipo de cambio |
