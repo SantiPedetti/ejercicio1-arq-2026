@@ -1,10 +1,5 @@
 # ADR-003: Aislamiento de fallos por filtro y politica de continuidad del lote
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada
-
 ## Contexto
 
 El sistema procesa lotes y la consigna exige explicitamente soportar "filtro que lanza excepcion", "datos corruptos en mitad del pipeline" y "pipeline interrumpido por falla de red", ademas de continuar el procesamiento cuando la API de tipo de cambio falla. Hay entonces tres clases de problema con tratamientos distintos:
@@ -23,8 +18,6 @@ Tratar las tres igual produciria, segun el caso elegido, rechazos indebidos o er
 - Restricciones organizacionales: RO-04 (casos de error requeridos por la consigna).
 
 ## Opciones consideradas
-
-Comparacion como **analisis actual**.
 
 ### Opcion A — Frontera de errores en el orquestador, con estados diferenciados (elegida)
 
