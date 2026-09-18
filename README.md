@@ -5,7 +5,7 @@ Backend en Node.js + TypeScript + Express que procesa lotes de reservas de vuelo
 - Estilo arquitectonico: **Pipes & Filters** en proceso.
 - Integracion externa: **ExchangeRate-API** (sin API key) con timeout, reintentos, cache y tasas de respaldo.
 - Documentacion arquitectonica: [`docs/architecture/architecture.md`](docs/architecture/architecture.md), ADRs en [`docs/adr`](docs/adr) y escenarios de calidad en [`docs/architecture/quality-scenarios`](docs/architecture/quality-scenarios).
-- Adicionalmente en la otra rama se genero una solucion alternativa con el uso de otras herramientas para generar el codigo. En el archivo COMPARATIVA.md (en la rama: version/claude-antigravity) se realiza una comparación entre ambas.
+- Por más de que optamos por esta solucion, adicionalmente, en la otra rama (version/claude-antigravity) se genero una solucion alternativa con el uso de otras herramientas para generar el codigo. En el archivo COMPARATIVA.md (ubicado en la otra rama) se realiza una comparación entre ambas.
 
 ## Requisitos
 
