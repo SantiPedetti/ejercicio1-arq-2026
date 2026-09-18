@@ -1,10 +1,5 @@
 # ADR-005: Configuracion del pipeline mutable en memoria, con overrides por request
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada
-
 ## Contexto
 
 La consigna exige dos endpoints de configuracion (`GET` y `PUT /pipeline/config`), la posibilidad de habilitar o deshabilitar filtros y parametros opcionales de configuracion en el propio request de procesamiento. Las reglas afectadas —multiplicadores por clase, porcentajes de lealtad y de tipo de pasajero, impuestos, tasa de aeropuerto, sobrecargo por combustible y los parametros de la integracion externa— son justamente las que cambian con mayor frecuencia por decision comercial o regulatoria. No hay base de datos ni infraestructura de configuracion en el alcance del ejercicio.
@@ -72,7 +67,7 @@ Convertir las reglas volatiles en datos leidos en cada ejecucion es lo que permi
 
 | Riesgo | Probabilidad o impacto | Mitigacion |
 |---|---|---|
-| **El endpoint no tiene autenticacion: cualquiera con acceso de red puede alterar precios** | Alta en un entorno real / alto | Limitacion deliberada del alcance academico; autenticacion y autorizacion quedan como **Propuesta** y estan registradas en QA-08 |
+| **El endpoint no tiene autenticacion: cualquiera con acceso de red puede alterar precios** | Alta en un entorno real / alto | Limitacion deliberada del alcance academico; autenticacion y autorizacion quedan como propuesta y estan registradas en QA-08 |
 | `filterOrder` sin `basePrice` u otra etapa necesaria | Media / medio | Los filtros posteriores verifican precondiciones y rechazan con `PRICING_NOT_INITIALIZED` en lugar de calcular mal |
 | Divergencia de configuracion entre replicas | Baja hoy / medio | Una sola instancia en el alcance actual; configuracion compartida como Propuesta |
 | Cambio de `exchangeRate` con tasas cacheadas incoherentes | Media / bajo | El `PUT` invalida la cache cuando toca esa seccion |
