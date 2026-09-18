@@ -1,10 +1,5 @@
 # ADR-007: Orden del pipeline y separacion del filtro de tipo de cambio en dos etapas
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada
-
 ## Contexto
 
 La consigna enumera los filtros en este orden:
