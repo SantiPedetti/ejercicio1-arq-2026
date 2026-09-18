@@ -1,10 +1,5 @@
 # ADR-002: Contexto mutable acumulativo frente a transformacion inmutable
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada
-
 ## Contexto
 
 Definido el estilo Pipes & Filters (ADR-001), hay que decidir que viaja por los pipes y como lo modifican los filtros. El sistema debe devolver, por cada reserva: los datos resueltos de pasajero y vuelo, el desglose completo del precio, la metadata de la conversion de moneda, **la lista de errores y la lista de warnings** y una traza de las etapas ejecutadas. Ademas debe seguir procesando tras un fallo de integracion (restriccion RT-07), lo que implica que un problema no puede cortar el flujo con una excepcion.
@@ -17,8 +12,6 @@ Definido el estilo Pipes & Filters (ADR-001), hay que decidir que viaja por los 
 - Restricciones organizacionales: RO-03.
 
 ## Opciones consideradas
-
-Comparacion como **analisis actual**.
 
 ### Opcion A — Contexto mutable que acumula diagnostico (elegida)
 
