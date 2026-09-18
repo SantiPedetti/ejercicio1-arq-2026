@@ -1,10 +1,5 @@
 # ADR-004: Integracion resiliente con la API de tipo de cambio
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada
-
 ## Contexto
 
 El pipeline necesita la cotizacion de la moneda del pais de destino para convertir el total. Esa informacion viene de un tercero gratuito, sin SLA y con cuota mensual, y la consigna fija los parametros de resiliencia: timeout maximo de 5 segundos, hasta 3 reintentos, cache de tasas por 1 hora con invalidacion manual, fallback a una tasa por defecto y logging de los errores de integracion. Tambien aclara que, si la API falla, el procesamiento continua con warnings y precios en USD.
@@ -20,7 +15,7 @@ La consigna ofrece cuatro proveedores posibles. Se eligio **ExchangeRate-API** (
 
 ## Opciones consideradas
 
-Las opciones de proveedor estan **documentadas en la consigna**; la comparacion de las tacticas es un **analisis actual**.
+Las opciones de proveedor son las **documentadas en la consigna**; la comparacion de las tacticas es un **analisis actual**.
 
 ### Opcion A — Puerto `ExchangeRateProvider` + cliente con timeout, retry, cache y fallback (elegida)
 
