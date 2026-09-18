@@ -1,10 +1,5 @@
 # ADR-006: Datos mock y estado de procesamiento en memoria, detras de abstracciones
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada
-
 ## Contexto
 
 La consigna pide datos de prueba predefinidos en memoria que simulen una base de datos, en archivos separados (`/data/mockPassengers.ts`, `/data/mockFlights.ts`), cargados al inicio y faciles de modificar para distintos escenarios de testing. Ademas exige `GET /reservations/:id/status`, que devuelve el estado del procesamiento de una reserva concreta: eso implica retener informacion **despues** de que termine el request que la genero. No hay base de datos en el alcance.
@@ -18,7 +13,7 @@ La consigna pide datos de prueba predefinidos en memoria que simulen una base de
 
 ## Opciones consideradas
 
-Comparacion como **analisis actual**; la restriccion de usar datos mock esta **documentada en la consigna**.
+Comparacion como **analisis actual**; la restriccion de usar datos mock segun la consigna.
 
 ### Opcion A — Arrays en modulos, indexados en `Map` detras de repositorios; resultados en un `ProcessingStore` en memoria (elegida)
 
@@ -72,7 +67,7 @@ La indireccion del repositorio cuesta muy poco y es lo unico que hace que una fu
 
 | Riesgo | Probabilidad o impacto | Mitigacion |
 |---|---|---|
-| Crecimiento ilimitado de `ProcessingStore` | Media en uso prolongado / medio | `clear()` disponible; politica de expiracion o limite LRU queda como **Propuesta** |
+| Crecimiento ilimitado de `ProcessingStore` | Media en uso prolongado / medio | `clear()` disponible; politica de expiracion o limite LRU queda como propuesta|
 | Perdida del historial de procesamiento al reiniciar | Alta / bajo en el alcance academico | Documentado como limitacion en el README; persistencia como Propuesta |
 | Sobreventa por no decrementar asientos | Alta si se usara en produccion / alto | Explicitamente fuera de alcance; requeriria transacciones y control de concurrencia |
 | Datos mock que caducan | Baja | Fechas calculadas relativas al arranque |
