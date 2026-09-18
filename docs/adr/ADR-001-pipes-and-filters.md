@@ -1,10 +1,5 @@
 # ADR-001: Adoptar Pipes & Filters en proceso con contexto compartido
 
-- **Estado:** Aceptado
-- **Fecha:** 2026-09-17
-- **Responsables:** Equipo de desarrollo del ejercicio
-- **Estado de evidencia:** Confirmada (el estilo lo impone la consigna; la forma concreta de implementarlo es la decision registrada aqui)
-
 ## Contexto
 
 El sistema debe aplicar siete reglas de procesamiento independientes a cada reserva (dos validaciones, un enriquecimiento externo y cuatro etapas de calculo), en un orden definido, con la posibilidad de habilitar o deshabilitar etapas y con cada etapa testeable por separado. La consigna impone el estilo Pipes & Filters, por lo que la decision no es *si* usarlo, sino *como*: que es un "pipe", que contrato tiene un filtro y quien orquesta.
@@ -24,8 +19,6 @@ Fuerzas en juego:
 - Restricciones organizacionales: RO-03 (filtros independientes y testeables por separado).
 
 ## Opciones consideradas
-
-Esta comparacion es un **analisis actual**: no hay evidencia de que estas alternativas se hayan evaluado y descartado historicamente.
 
 ### Opcion A — Cadena secuencial en memoria con contrato uniforme `Filter` (elegida)
 
@@ -57,7 +50,7 @@ Se implementa el pipeline como una **cadena secuencial en memoria** (Opcion A): 
 
 ## Justificacion
 
-Las fuerzas prioritarias son modificabilidad y testabilidad, no throughput. La interfaz uniforme es exactamente el mecanismo que permite que el orquestador ignore la semantica de cada etapa y que el orden sea configuracion; las fabricas con dependencias inyectadas son lo que permite probar un filtro con un reloj fijo y un proveedor de tasas falso. Las opciones B y C resuelven problemas de escala que este sistema no tiene, y la D sacrifica precisamente los atributos priorizados.
+Los atributos prioritarios son modificabilidad y testabilidad. La interfaz uniforme es exactamente el mecanismo que permite que el orquestador ignore la semantica de cada etapa y que el orden sea configuracion; las fabricas con dependencias inyectadas son lo que permite probar un filtro con un reloj fijo y un proveedor de tasas falso. Las opciones B y C resuelven problemas de escala que este sistema no tiene, y la D sacrifica precisamente los atributos priorizados.
 
 ## Consecuencias positivas
 
