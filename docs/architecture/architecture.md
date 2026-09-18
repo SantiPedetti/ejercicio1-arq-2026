@@ -1,16 +1,5 @@
 # Documentacion arquitectonica — Sistema de Reservas de Vuelos
 
-Documento educativo: no describe solo *que* existe, sino *por que* cada decision es razonable, que fuerzas la motivan, que alternativas habia y que trade-offs introduce.
-
-Cada afirmacion relevante lleva una etiqueta de evidencia:
-
-- **Confirmada:** respaldada por la consigna, el codigo, la configuracion o las pruebas de este repositorio.
-- **Inferida:** deducida del diseno actual, sin evidencia de la intencion historica.
-- **Propuesta:** recomendacion que todavia no forma parte del sistema.
-- **Desconocida:** no hay informacion suficiente.
-
-Fuentes consultadas: consigna del ejercicio (`Ejercicio de Aplicacion 1`), codigo fuente en `src/`, configuracion en `src/config/pipelineConfig.ts`, pruebas en `tests/` (58 casos), coleccion de Postman y ejecucion manual contra la API externa real. No existe SRS formal, historias de usuario ni metricas de produccion: los huecos quedan listados en la ultima seccion.
-
 ---
 
 ## 2.1 Proposito del sistema
@@ -19,7 +8,7 @@ Fuentes consultadas: consigna del ejercicio (`Ejercicio de Aplicacion 1`), codig
 
 Una reserva de vuelo no se puede confirmar con un unico calculo: hay que verificar que el pasajero exista y este habilitado, que el vuelo exista y tenga lugar, y despues construir el precio final componiendo multiplicadores de clase, descuentos comerciales, ajustes por tipo de pasajero, impuestos y tasas. Esas reglas cambian a ritmos distintos y por motivos distintos (comercial, regulatorio, operativo), y parte de la informacion necesaria —la cotizacion de la moneda del pais de destino— proviene de un tercero que puede estar caido.
 
-El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando esas reglas de forma trazable y configurable**, entregando por cada reserva el precio desglosado, la conversion de moneda y el detalle de errores y avisos, sin que el fallo de una reserva o de un tercero comprometa el resto del lote. (Confirmada: consigna, secciones "Objetivo" y "Aclaraciones".)
+El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando esas reglas de forma trazable y configurable**, entregando por cada reserva el precio desglosado, la conversion de moneda y el detalle de errores y avisos, sin que el fallo de una reserva o de un tercero comprometa el resto del lote.
 
 ### Usuarios y actores
 
@@ -30,7 +19,7 @@ El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando 
 | Proveedor de tipo de cambio | Servicio externo ExchangeRate-API | (Actor externo) Proveer cotizaciones actualizadas |
 | Equipo de desarrollo | Autores y mantenedores de los filtros | Agregar o modificar filtros con bajo riesgo de regresion |
 
-(Confirmada para el cliente y el proveedor: endpoints y cliente HTTP existentes. Inferida para operador y equipo de desarrollo: la consigna exige configurabilidad y filtros testeables por separado, pero no nombra roles.)
+(Confirmada para el cliente y el proveedor: endpoints y cliente HTTP existentes. Para el caso del operador y equipo de desarrollo: la consigna exige configurabilidad y filtros testeables por separado, se asumen los roles.)
 
 ### Funciones principales
 
@@ -44,11 +33,7 @@ El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando 
 - Consultar el estado del ultimo procesamiento de una reserva.
 - Consultar y modificar la configuracion del pipeline en ejecucion.
 
-(Confirmada: `src/pipeline/filters/`, `src/api/`, consigna "Filtros a Implementar" y "Endpoints Requeridos".)
-
 ### Alcance
-
-**Incluido:**
 
 - Pipeline de filtros en proceso, sincronico por reserva.
 - Datos de pasajeros y vuelos mock en memoria.
@@ -64,11 +49,10 @@ El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando 
 - Despliegue, escalado horizontal y observabilidad centralizada.
 - Procesamiento asincronico o distribuido de los filtros.
 
-(Confirmada: no hay codigo de persistencia, seguridad ni despliegue en el repositorio; la consigna acota el ejercicio a mock data y pipeline en proceso.)
+Limitamos el sistema a mock data y pipeline en proceso. No hay codigo de persistencia, seguridad ni despliegue en el repositorio.
 
 ### Documentos relacionados
 
-- Consigna del ejercicio: `Ejercicio de Aplicacion 1.md` (documento del curso, fuera del repositorio).
 - [README](../../README.md) — instalacion, endpoints y reglas de negocio.
 - ADRs: [`docs/adr`](../adr).
 - Escenarios de calidad: [`docs/architecture/quality-scenarios`](quality-scenarios).
@@ -76,8 +60,6 @@ El objetivo del sistema es **procesar lotes de solicitudes de reserva aplicando 
 ---
 
 ## 2.2 Requerimientos significativos de arquitectura
-
-Se incluyen solo los requerimientos que condicionan la estructura, afectan a varios componentes, obligan a adoptar una tactica o tecnologia, o tienen alto costo de cambio. Requerimientos puramente locales (por ejemplo, el formato exacto de un mensaje de error) quedan fuera.
 
 ### 2.2.1 Resumen de requerimientos funcionales
 
@@ -92,20 +74,18 @@ Se incluyen solo los requerimientos que condicionan la estructura, afectan a var
 | RF-07 | Consultar estado de una reserva | `GET /reservations/:id/status` | Sistema cliente | Exige retener resultados fuera del ciclo del request |
 | RF-08 | Ver y modificar la configuracion del pipeline | `GET`/`PUT /pipeline/config`, incluida la habilitacion de filtros | Operador comercial | Convierte el orden y las reglas en datos mutables en runtime |
 
-(Todos Confirmada: consigna "Endpoints Requeridos" / "Filtros a Implementar" y su implementacion en `src/api/reservations.routes.ts`, `src/api/pipeline.routes.ts` y `src/pipeline/filters/`.)
-
 ### 2.2.2 Resumen de atributos de calidad
 
-| RF relacionado | ID | Atributo | Descripcion | Prioridad | Estado de evidencia |
-|---|---|---|---|---|---|
-| RF-01, RF-04, RF-08 | QA-01 | Modificabilidad | Agregar, quitar o reordenar filtros y cambiar porcentajes sin modificar el orquestador ni otros filtros | Alta | Confirmada (`src/pipeline/registry.ts`, `src/config/pipelineConfig.ts`, prueba de reordenamiento en `tests/api/pipeline.routes.test.ts`) |
-| RF-05 | QA-02 | Disponibilidad ante fallo del tercero | El procesamiento sobrevive a timeout, error HTTP o caida total del proveedor | Alta | Confirmada (consigna lo exige; `exchangeRateApiClient.ts` y `tests/services/exchangeRateApiClient.test.ts`) |
-| RF-01, RF-06 | QA-03 | Robustez / aislamiento de fallos | Una excepcion en un filtro no aborta el lote ni tumba el proceso | Alta | Confirmada (`src/pipeline/pipeline.ts`, prueba "aisla la excepcion de un filtro") |
-| RF-02..RF-05 | QA-04 | Testabilidad | Cada filtro se prueba aislado, sin HTTP ni red | Alta | Confirmada (consigna "Aclaraciones"; `FilterDependencies` y 58 pruebas sin red) |
-| RF-05 | QA-05 | Rendimiento / eficiencia de la integracion | Evitar llamadas innecesarias al tercero y acotar la latencia por reserva | Media | Confirmada parcialmente (cache TTL 1 h y timeout 5 s implementados; presupuesto de latencia end-to-end: `Pendiente de validacion`) |
-| RF-06, RF-01 | QA-06 | Observabilidad / trazabilidad | Poder explicar que filtro hizo que y cuanto tardo | Media | Confirmada (`FilterTrace` en cada resultado, logger estructurado) |
-| RF-08 | QA-07 | Configurabilidad en runtime | Cambiar reglas y filtros habilitados sin reiniciar ni redeployar | Media | Confirmada (`PipelineConfigStore`, `PUT /pipeline/config`) |
-| RF-01, RF-08 | QA-08 | Seguridad | Control de acceso a la modificacion de reglas de negocio | Baja en el alcance actual | Propuesta (no implementada; ver ADR-005) |
+| RF relacionado | ID | Atributo | Descripcion | Prioridad |
+|---|---|---|---|---|
+| RF-01, RF-04, RF-08 | QA-01 | Modificabilidad | Agregar, quitar o reordenar filtros y cambiar porcentajes sin modificar el orquestador ni otros filtros | Alta |
+| RF-05 | QA-02 | Disponibilidad ante fallo del tercero | El procesamiento sobrevive a timeout, error HTTP o caida total del proveedor | Alta |
+| RF-01, RF-06 | QA-03 | Robustez / aislamiento de fallos | Una excepcion en un filtro no aborta el lote ni tumba el proceso | Alta |
+| RF-02..RF-05 | QA-04 | Testabilidad | Cada filtro se prueba aislado, sin HTTP ni red | Alta |
+| RF-05 | QA-05 | Rendimiento / eficiencia de la integracion | Evitar llamadas innecesarias al tercero y acotar la latencia por reserva | Media |
+| RF-06, RF-01 | QA-06 | Observabilidad / trazabilidad | Poder explicar que filtro hizo que y cuanto tardo | Media |
+| RF-08 | QA-07 | Configurabilidad en runtime | Cambiar reglas y filtros habilitados sin reiniciar ni redeployar | Media |
+| RF-01, RF-08 | QA-08 | Seguridad | Control de acceso a la modificacion de reglas de negocio | Baja en el alcance actual |
 
 ### 2.2.3 Restricciones arquitectonicas
 
@@ -119,8 +99,6 @@ Se incluyen solo los requerimientos que condicionan la estructura, afectan a var
 | RT-06 | Dominio | Todos los precios base estan en USD | Simplifica el calculo: una sola conversion al final |
 | RT-07 | Comportamiento ante fallos | Si la API de cambio falla, el procesamiento continua con warnings y precios en USD | Prohibe que un error de integracion se propague como error de negocio |
 | RT-08 | Dominio | Umbrales de edad: child < 12, senior > 65 | Regla de coherencia que el filtro de pasajero debe verificar, no solo usar para descuentos |
-
-(Todas Confirmada: consigna, secciones "Integracion con API de Tipo de Cambio", "Estrategia de Validacion" y "Aclaraciones".)
 
 ### 2.2.4 Restricciones organizacionales
 
@@ -167,15 +145,13 @@ Se incluyen solo los requerimientos que condicionan la estructura, afectan a var
                        └────────────────────┘
 ```
 
-Los filtros solo conocen el `ReservationContext` y su objeto de dependencias; nunca se invocan entre si. (Confirmada: `src/pipeline/filter.ts`, `src/pipeline/registry.ts`.)
+Los filtros solo conocen el `ReservationContext` y su objeto de dependencias. No se invocan entre si.
 
 ---
 
 ## 3.4.2 Decisiones de diseno
 
 ### DD-001 — Pipes & Filters con contexto de reserva como pipe en memoria
-
-**Estado de evidencia:** Confirmada
 
 **Necesidad**
 
@@ -190,8 +166,8 @@ Los filtros solo conocen el `ReservationContext` y su objeto de dependencias; nu
 **Clasificacion**
 
 - Estilo arquitectonico: Pipes & Filters.
-- Patron: Chain of Responsibility en su variante "todos participan" (no hay corto circuito por consumo del mensaje, sino por marca de aborto).
-- Tactica: separacion de responsabilidades para modificabilidad; interfaz uniforme para reducir el acoplamiento.
+- Patron: Chain of Responsibility en su variante "todos participan".
+- Tactica: separacion de responsabilidades para modificabilidad. E interfaz uniforme para reducir el acoplamiento.
 - Tecnologia: TypeScript (interfaces estructurales), Node.js.
 
 **Justificacion**
@@ -200,7 +176,7 @@ Las siete reglas de la consigna son independientes entre si y cambian por motivo
 
 **Alternativas**
 
-Analisis actual (no hay evidencia de que se hayan evaluado historicamente): un unico servicio `calculateReservation` con las reglas en orden fijo seria mas corto y mas rapido de leer, pero haria imposible RF-08 (habilitar/deshabilitar filtros) sin condicionales dispersos, y obligaria a probar el calculo completo para verificar una regla. Un pipeline con colas o eventos (por ejemplo, streams de Node o un broker) daria concurrencia y desacople temporal, a costa de complejidad, orden no garantizado y dificultad para devolver un resultado sincronico por HTTP, que es lo que exige RF-01.
+Analisis actual: un unico servicio `calculateReservation` con las reglas en orden fijo seria mas corto y mas rapido de leer, pero haria imposible RF-08 (habilitar/deshabilitar filtros) sin condicionales dispersos, y obligaria a probar el calculo completo para verificar una regla. Un pipeline con colas o eventos (por ejemplo, streams de Node o un broker) daria concurrencia y desacople temporal, a costa de complejidad, orden no garantizado y dificultad para devolver un resultado sincronico por HTTP, que es lo que exige RF-01.
 
 **Consecuencias**
 
@@ -222,8 +198,6 @@ Analisis actual (no hay evidencia de que se hayan evaluado historicamente): un u
 
 ### DD-002 — Contexto mutable que acumula diagnostico, en lugar de transformacion inmutable
 
-**Estado de evidencia:** Confirmada
-
 **Necesidad**
 
 - RF relacionados: RF-06, RF-01.
@@ -243,7 +217,7 @@ Analisis actual (no hay evidencia de que se hayan evaluado historicamente): un u
 
 **Justificacion**
 
-RF-06 pide un reporte de errores *y* warnings por reserva, y RT-07 exige continuar procesando pese a fallos de integracion. Con excepciones, el primer problema cortaria el flujo y perderiamos los diagnosticos posteriores; con estructuras inmutables, cada filtro tendria que reconstruir y copiar un objeto grande en cada paso sin beneficio funcional visible para el cliente.
+RF-06 pide un reporte de errores y warnings por reserva, y RT-07 exige continuar procesando pese a fallos de integracion. Con excepciones, el primer problema cortaria el flujo y perderiamos los diagnosticos posteriores. Mientras que con estructuras inmutables, cada filtro tendria que reconstruir y copiar un objeto grande en cada paso sin beneficio funcional visible para el cliente.
 
 **Alternativas**
 
@@ -268,8 +242,6 @@ Analisis actual: (a) filtros puros que devuelven un contexto nuevo (`{...context
 ---
 
 ### DD-003 — Interfaz uniforme de filtro con dependencias inyectadas y registry por nombre
-
-**Estado de evidencia:** Confirmada
 
 **Necesidad**
 
@@ -314,8 +286,6 @@ Analisis actual: un contenedor de inversion de control (por ejemplo, tsyringe o 
 
 ### DD-004 — Aislamiento de fallos en el orquestador y modelo de estados por reserva
 
-**Estado de evidencia:** Confirmada
-
 **Necesidad**
 
 - RF relacionados: RF-01, RF-06.
@@ -328,7 +298,7 @@ Analisis actual: un contenedor de inversion de control (por ejemplo, tsyringe o 
 
 **Clasificacion**
 
-- Patron: Error boundary por etapa; Circuit-breaker *no* aplicado (ver Riesgos).
+- Patron: Error boundary por etapa; Circuit-breaker no aplicado (ver Riesgos).
 - Tactica: contencion de fallos (`fault containment`), degradacion elegante, deteccion y registro de excepciones.
 - Tecnologia: `try/catch` de JavaScript, `performance.now()` para medicion.
 
@@ -344,7 +314,7 @@ Analisis actual: propagar la excepcion y devolver 500 para todo el lote seria ma
 
 - Beneficios: el proceso nunca cae por un filtro defectuoso; el cliente recibe resultados parciales utiles y un motivo por reserva.
 - Costos y desventajas: un defecto sistematico (por ejemplo, un filtro roto para todas las reservas) se reporta como 200 con N reservas `failed`, no como error del servicio; requiere que el consumidor mire `summary.failed`.
-- Riesgos: si el fallo es un tercero degradado, procesar todo el lote igual multiplica la latencia. Mitigacion actual: timeout acotado y cache; un circuit breaker queda como **Propuesta**.
+- Riesgos: si el fallo es un tercero degradado, procesar todo el lote igual multiplica la latencia. Mitigacion actual: timeout acotado y cache.
 - Trade-offs: se prioriza completitud del lote sobre falla rapida.
 
 **Evidencia**
@@ -360,7 +330,6 @@ Analisis actual: propagar la excepcion y devolver 500 para todo el lote seria ma
 
 ### DD-005 — Distincion entre error de negocio (rechazo) y warning no bloqueante
 
-**Estado de evidencia:** Confirmada
 
 **Necesidad**
 
@@ -380,7 +349,7 @@ Analisis actual: propagar la excepcion y devolver 500 para todo el lote seria ma
 
 **Justificacion**
 
-La consigna es explicita: pasajero inexistente o vuelo sin asientos deben rechazar la reserva, mientras que un fallo de la API de cambio debe continuar "con warnings y precios en USD". Sin esta distincion en el modelo, cualquier tratamiento uniforme violaria una de las dos reglas.
+Segun la consigna: pasajero inexistente o vuelo sin asientos deben rechazar la reserva, mientras que un fallo de la API de cambio debe continuar "con warnings y precios en USD". Sin esta distincion en el modelo, cualquier tratamiento uniforme violaria una de las dos reglas.
 
 **Alternativas**
 
@@ -406,8 +375,6 @@ Analisis actual: una sola lista de errores con un flag `blocking` es equivalente
 
 ### DD-006 — Puerto `ExchangeRateProvider` con adaptador HTTP concreto
 
-**Estado de evidencia:** Confirmada
-
 **Necesidad**
 
 - RF relacionados: RF-05.
@@ -426,7 +393,7 @@ El filtro de enriquecimiento depende de la interfaz `ExchangeRateProvider` (`get
 
 **Justificacion**
 
-La consigna ofrece cuatro proveedores posibles y aclara que la API es externa y puede fallar; el punto de variacion es evidente. Con el puerto, cambiar de ExchangeRate-API a Fixer implica una clase nueva y ninguna modificacion del pipeline. Ademas, las 58 pruebas corren sin red porque el doble se inyecta en la frontera correcta.
+La consigna ofrece cuatro proveedores posibles y aclara que la API es externa y puede fallar. Con el puerto, cambiar de ExchangeRate-API a Fixer implica una clase nueva y ninguna modificacion del pipeline. Ademas, las 58 pruebas corren sin red porque el doble se inyecta en la frontera correcta.
 
 **Alternativas**
 
@@ -452,8 +419,6 @@ Analisis actual: llamar `fetch` directamente en el filtro seria mas corto pero v
 
 ### DD-007 — Timeout, reintentos, cache con TTL y tasas de respaldo en el cliente de tasas
 
-**Estado de evidencia:** Confirmada
-
 **Necesidad**
 
 - RF relacionados: RF-05.
@@ -476,7 +441,7 @@ RT-05 fija los parametros. La cuota mensual del proveedor (RT-04) hace que la ca
 
 **Alternativas**
 
-Analisis actual: sin cache, el sistema agotaria la cuota y multiplicaria la latencia del lote; sin fallback, un proveedor caido dejaria reservas sin convertir y violaria RT-07; con reintentos sin timeout, una conexion colgada bloquearia el lote indefinidamente. Un circuit breaker seria el siguiente paso natural si se observara degradacion sostenida: queda **Propuesta**.
+Analisis actual: sin cache, el sistema agotaria la cuota y multiplicaria la latencia del lote; sin fallback, un proveedor caido dejaria reservas sin convertir y violaria RT-07; con reintentos sin timeout, una conexion colgada bloquearia el lote indefinidamente. Un circuit breaker seria el siguiente paso natural si se observara degradacion sostenida, podria implementarse a futuro.
 
 **Consecuencias**
 
@@ -498,8 +463,6 @@ Analisis actual: sin cache, el sistema agotaria la cuota y multiplicaria la late
 ---
 
 ### DD-008 — Reglas de negocio y topologia del pipeline como configuracion mutable en memoria
-
-**Estado de evidencia:** Confirmada
 
 **Necesidad**
 
@@ -529,7 +492,7 @@ Analisis actual: variables de entorno o un archivo JSON serian suficientes para 
 
 - Beneficios: cambio de reglas sin redeploy; escenarios de prueba reproducibles; los filtros quedan libres de constantes.
 - Costos y desventajas: la configuracion se pierde al reiniciar y no se comparte entre instancias; no hay historial de cambios.
-- Riesgos: **sin autenticacion, cualquiera con acceso a la red puede alterar precios** (QA-08, Propuesta). Un `filterOrder` mal armado (por ejemplo, sin `basePrice`) degrada los resultados; mitigado porque los filtros posteriores rechazan con `PRICING_NOT_INITIALIZED` en lugar de calcular mal.
+- Riesgos: **sin autenticacion, cualquiera con acceso a la red puede alterar precios** (QA-08, propuesta a futuro). Un `filterOrder` mal armado (por ejemplo, sin `basePrice`) degrada los resultados; mitigado porque los filtros posteriores rechazan con `PRICING_NOT_INITIALIZED` en lugar de calcular mal.
 - Trade-offs: flexibilidad operativa a cambio de superficie de riesgo y de estado no durable.
 
 **Evidencia**
@@ -544,8 +507,6 @@ Analisis actual: variables de entorno o un archivo JSON serian suficientes para 
 ---
 
 ### DD-009 — Validacion del contrato en la frontera HTTP con esquemas estrictos
-
-**Estado de evidencia:** Confirmada
 
 **Necesidad**
 
@@ -591,8 +552,6 @@ Analisis actual: validacion manual con `typeof` evitaria la dependencia, a costa
 
 ### DD-010 — Datos mock en memoria detras de repositorios indexados
 
-**Estado de evidencia:** Confirmada
-
 **Necesidad**
 
 - RF relacionados: RF-02, RF-03.
@@ -636,8 +595,6 @@ Analisis actual: importar los arrays directamente en cada filtro seria mas corto
 ---
 
 ### DD-011 — Separacion del filtro de tipo de cambio en enriquecimiento y conversion
-
-**Estado de evidencia:** Confirmada
 
 **Necesidad**
 
@@ -683,8 +640,6 @@ Analisis actual: (a) mover el filtro unico al final del pipeline — mas simple,
 
 ### DD-012 — Traza de ejecucion por filtro y logging estructurado
 
-**Estado de evidencia:** Confirmada
-
 **Necesidad**
 
 - RF relacionados: RF-06, RF-07.
@@ -707,7 +662,7 @@ En un pipeline configurable, "el precio salio distinto" solo se puede explicar s
 
 **Alternativas**
 
-Analisis actual: un logger de libreria (pino, winston) daria transporte, rotacion y niveles maduros; se omitio para no agregar dependencias en un ejercicio sin infraestructura de logs. OpenTelemetry seria el camino correcto para un entorno real y queda **Propuesta**.
+Analisis actual: un logger de libreria (pino, winston) daria transporte, rotacion y niveles maduros; se omitio para no agregar dependencias en un ejercicio sin infraestructura de logs. OpenTelemetry seria el camino correcto para un entorno real.
 
 **Consecuencias**
 
@@ -744,8 +699,6 @@ Analisis actual: un logger de libreria (pino, winston) daria transporte, rotacio
 | RF-08 | QA-07, QA-08 | DD-008, DD-009 | External configuration + Schema validation | ADR-005 | `src/api/pipeline.routes.ts`, `src/api/schemas.ts` |
 | RF-01, RF-08 | QA-03 | DD-009 | Validacion en la frontera | ADR-003 | `src/api/schemas.ts`; pruebas de 400 |
 
-No hay filas huerfanas: cada decision referencia al menos un RF, un atributo o restriccion, un ADR y evidencia verificable del repositorio.
-
 ---
 
 ## Preguntas y datos pendientes
@@ -755,6 +708,5 @@ No hay filas huerfanas: cada decision referencia al menos un RF, un atributo o r
 | Presupuesto de latencia por lote y tamano maximo esperado de lote | Product owner del curso | Sin el, QA-05 no tiene medida verificable; hoy el limite es un tope arbitrario de 200 reservas por request (`Pendiente de validacion`) |
 | Volumen de reservas por hora y por destino | Product owner | Determina si la cuota mensual del proveedor gratuito alcanza y si hace falta un circuit breaker |
 | Politica de antiguedad aceptable de una cotizacion | Area comercial | El TTL de 1 hora y las tasas de respaldo se tomaron de la consigna, sin validacion de negocio |
-| Quien puede modificar la configuracion del pipeline | Area de seguridad / catedra | QA-08 queda como Propuesta; hoy el endpoint es abierto |
+| Quien puede modificar la configuracion del pipeline | Area de seguridad / catedra | QA-08 queda como propuesta; hoy el endpoint es abierto |
 | Se debe reservar efectivamente el asiento (decrementar `availableSeats`) | Product owner | Definiria la necesidad de transacciones y control de concurrencia, hoy fuera de alcance |
-| Origen historico de los porcentajes de descuento e impuestos | Catedra | Se implementaron tal como los enuncia la consigna; no hay evidencia de su justificacion de negocio |
